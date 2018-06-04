@@ -1,4 +1,16 @@
-{-# LANGUAGE Rank2Types, RecordWildCards #-}
+{- |
+Module      : Control.Monad.Script.Http
+Description : A generic monad for expressing HTTP interactions.
+Copyright   : 2018, Automattic, Inc.
+License     : BSD3
+Maintainer  : Nathan Bloomfield (nbloomf@gmail.com)
+Stability   : experimental
+Portability : POSIX
+
+A basic type and monad for describing HTTP interactions.
+-}
+
+{-# LANGUAGE Rank2Types, RecordWildCards, NoImplicitPrelude #-}
 module Control.Monad.Script.Http (
     Http()
   , execHttpM
@@ -28,7 +40,6 @@ module Control.Monad.Script.Http (
   , S(..)
   , basicState
   , W(..)
-  , module Control.Monad.Script.Http.Types.MockIO
 
   , comment
   , wait
@@ -44,13 +55,20 @@ module Control.Monad.Script.Http (
   , getLine
 
   , evalIO
+
+  , MockIO(..)
+  , evalMockIO
 ) where
 
-import Prelude hiding (putStrLn, getLine)
-
-import Control.Monad (ap)
-import Data.Typeable (Typeable)
+import Control.Monad (Functor(..), Monad(..), ap)
+import Control.Applicative (Applicative(..))
 import Data.ByteString.Lazy (ByteString)
+import Data.Either (Either(..))
+import Data.Function (($), (.))
+import Data.Int (Int)
+import Data.Maybe (Maybe(..))
+import Data.String (String)
+import Data.Typeable (Typeable)
 
 import qualified Control.Monad.Script as S
 
@@ -60,6 +78,9 @@ import Control.Monad.Script.Http.Types.MockIO
 
 
 
+-- | An HTTP session returning an @a@, writing to a log of type @W e w@, reading from an environment of type @R e w r@, with state of type @S s@, throwing errors of type @E e@, and performing effectful computations described by @P p a@.
+--
+-- Behind the scenes @Http@ is a stack of reader, writer, state, error, and prompt monads.
 newtype Http e r w s p a = Http
   { http :: S.Script (E e) (R e w r) (W e w) (S s) (P p) a
   } deriving Typeable

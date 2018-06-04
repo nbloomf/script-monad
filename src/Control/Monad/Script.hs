@@ -1,4 +1,18 @@
-{-# LANGUAGE Rank2Types, TupleSections #-}
+{- |
+Module      : Control.Monad.Script
+Description : An unrolled stack of Reader, Writer, Error, State, and Prompt.
+Copyright   : 2018, Automattic, Inc.
+License     : BSD3
+Maintainer  : Nathan Bloomfield (nbloomf@gmail.com)
+Stability   : experimental
+Portability : POSIX
+
+@Script@ is an unrolled stack of reader, writer, state, error, and prompt monads, meant as a basis for building more specific DSLs. The addition of prompt to the monad team makes it straightforward to build effectful computations which defer the actual effects (and effect types) to an evaluator function that is both precisely controlled and easily extended.
+
+The name 'Script' is meant to evoke the script of a play. In the theater sense a script is not a list of /instructions/ so much as a list of /suggestions/, and every cast gives a unique interpretation. Similarly a 'Script' is a pure value that gets an effectful interpretation from a user-supplied evaluator.
+-}
+
+{-# LANGUAGE Rank2Types, TupleSections, ScopedTypeVariables #-}
 module Control.Monad.Script (
   -- * Script
     Script()
@@ -7,18 +21,17 @@ module Control.Monad.Script (
   , execScript
   , execScriptM
 
+  -- ** Error
+  , except
+  , triage
+  , throw
+  , catch
+
   -- ** Reader
   , ask
   , local
   , transport
   , reader
-
-  -- ** State
-  , get
-  , put
-  , modify
-  , modify'
-  , gets
 
   -- ** Writer
   , tell
@@ -26,11 +39,12 @@ module Control.Monad.Script (
   , pass
   , censor
 
-  -- ** Error
-  , except
-  , triage
-  , throw
-  , catch
+  -- ** State
+  , get
+  , put
+  , modify
+  , modify'
+  , gets
 
   -- ** Prompt
   , prompt
@@ -40,16 +54,21 @@ module Control.Monad.Script (
 import Control.Monad (ap)
 import Data.Monoid
 import Data.Typeable (Typeable)
+import Test.QuickCheck (Gen, Arbitrary(..), CoArbitrary(..))
 
 
+
+-- | Opaque stack of error, reader, writer, state, and prompt monads.
 newtype Script e r w s p a = Script
   { runScript :: (s,r) -> forall v. ((Either e a, s, w) -> v) -> (forall u. p u -> (u -> v) -> v) -> v
   } deriving Typeable
 
 
+
+-- | Execute a 'Script' with a specified initial state, environment, and continuation.
 execScriptC
-  :: s
-  -> r
+  :: s -- ^ Initial state
+  -> r -- ^ Environment
   -> ((Either e a, s, w) -> v)
   -> (forall u. p u -> (u -> v) -> v)
   -> Script e r w s p a
@@ -58,21 +77,23 @@ execScriptC s r end cont x =
   runScript x (s,r) end cont
 
 
+-- | Execute a 'Script' with a specified initial state and environment, and with a pure evaluator.
 execScript
-  :: s
-  -> r
-  -> (forall a. p a -> a)
+  :: s -- ^ Initial state
+  -> r -- ^ Environment
+  -> (forall u. p u -> u) -- ^ Pure evaluator
   -> Script e r w s p t
   -> (Either e t, s, w)
 execScript s r eval =
   execScriptC s r id (\p c -> c $ eval p)
 
 
+-- | Execute a 'Script' with a specified inital state and environment, and with a monadic evaluator.
 execScriptM
   :: (Monad m)
-  => s
-  -> r
-  -> (forall a. p a -> m a)
+  => s -- ^ Initial state
+  -> r -- ^ Environment
+  -> (forall u. p u -> m u) -- ^ Monadic evaluator
   -> Script e r w s p t
   -> m (Either e t, s, w)
 execScriptM s r eval =
@@ -106,6 +127,7 @@ instance (Monoid w) => Functor (Script e r w s p) where
 
 
 
+-- | Retrieve the environment.
 ask
   :: (Monoid w)
   => Script e r w s p r
@@ -114,6 +136,7 @@ ask = Script $ \(s,r) -> \end _ ->
 
 
 
+-- | Run an action with a locally adjusted environment of the same type.
 local
   :: (r -> r)
   -> Script e r w s p a
@@ -122,6 +145,7 @@ local = transport
 
 
 
+-- | Run an action with a locally adjusted environment of a possibly different type.
 transport
   :: (r2 -> r1)
   -> Script e r1 w s p a
@@ -131,6 +155,7 @@ transport f x = Script $ \(s,r) -> \end cont ->
 
 
 
+-- | Retrieve the image of the environment under a given function.
 reader
   :: (Monoid w)
   => (r -> a)
@@ -139,6 +164,7 @@ reader f = fmap f ask
 
 
 
+-- | Retrieve the current state.
 get
   :: (Monoid w)
   => Script e r w s p s
@@ -147,6 +173,7 @@ get = Script $ \(s,_) -> \end _ ->
 
 
 
+-- | Set the state.
 put
   :: (Monoid w)
   => s
@@ -156,6 +183,7 @@ put s = Script $ \(_,_) -> \end _ ->
 
 
 
+-- | Modify the current state lazily.
 modify
   :: (Monoid w)
   => (s -> s)
@@ -165,6 +193,7 @@ modify f = Script $ \(s,_) -> \end _ ->
 
 
 
+-- | Modify the current state strictly.
 modify'
   :: (Monoid w)
   => (s -> s)
@@ -174,6 +203,7 @@ modify' f = Script $ \(s,_) -> \end _ ->
 
 
 
+-- | Retrieve the image of the current state under a given function.
 gets
   :: (Monoid w)
   => (s -> a)
@@ -183,6 +213,7 @@ gets f = Script $ \(s,_) -> \end _ ->
 
 
 
+-- | Write to the log.
 tell
   :: w
   -> Script e r w s p ()
@@ -191,6 +222,7 @@ tell w = Script $ \(s,_) -> \end _ ->
 
 
 
+-- | Run an action and attach the log to the result.
 listen
   :: Script e r w s p a
   -> Script e r w s p (a,w)
@@ -200,6 +232,7 @@ listen x = Script $ \(r,s) -> \end cont ->
 
 
 
+-- | Run an action that returns a value and a log-adjusting function, and apply the function to the local log.
 pass
   :: Script e r w s p (a, w -> w)
   -> Script e r w s p a
@@ -213,6 +246,7 @@ pass x = Script $ \(r,s) -> \end cont ->
 
 
 
+-- | Run an action, applying a function to the local log.
 censor
   :: (w -> w)
   -> Script e r w s p a
@@ -227,6 +261,7 @@ censor f x = pass $ Script $ \(s,r) -> \end cont ->
 
 
 
+-- | Inject an 'Either' into a 'Script'.
 except
   :: (Monoid w)
   => Either e a
@@ -236,6 +271,7 @@ except z = Script $ \(s,_) -> \end _ ->
 
 
 
+-- | Run an action, applying a function to any error.
 triage
   :: (Monoid w)
   => (e1 -> e2)
@@ -251,6 +287,7 @@ triage f x = Script $ \(s,r) -> \end cont ->
 
 
 
+-- | Construct an error.
 throw
   :: (Monoid w)
   => e
@@ -260,6 +297,7 @@ throw e = Script $ \(s,_) -> \end _ ->
 
 
 
+-- | Run an action, applying a handler in case of an error result.
 catch
   :: Script e r w s p a
   -> (e -> Script e r w s p a)
@@ -273,9 +311,27 @@ catch x h = Script $ \(s,r) -> \end cont ->
     runScript x (s,r) end' cont
 
 
+
+-- | Inject an atomic effect.
 prompt
   :: (Monoid w)
   => p a
   -> Script e r w s p a
 prompt p = Script $ \(s,_) -> \end cont ->
   cont p (\a -> end (Right a, s, mempty))
+
+
+
+instance (Monoid w, Arbitrary a, CoArbitrary a)
+  => Arbitrary (Script e r w s p a) where
+  arbitrary = do
+    a <- arbitrary :: Gen a
+    k <- arbitrary :: Gen Int
+    if k`rem`2 == 0
+      then return $ return a
+      else do
+        f <- arbitrary :: Gen (a -> Script e r w s p a)
+        return $ return a >>= f
+
+instance Show (Script e r w s p a) where
+  show _ = "<Script>"

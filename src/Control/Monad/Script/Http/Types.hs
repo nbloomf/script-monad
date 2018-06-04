@@ -1,81 +1,119 @@
+{- |
+Module      : Control.Monad.Script.Http.Types
+Description : Types and helper functions.
+Copyright   : 2018, Automattic, Inc.
+License     : BSD3
+Maintainer  : Nathan Bloomfield (nbloomf@gmail.com)
+Stability   : experimental
+Portability : POSIX
+
+Types and helper functions for effects in the 'Http' monad.
+-}
+
 {-# LANGUAGE GADTs, RecordWildCards #-}
 module Control.Monad.Script.Http.Types (
+  -- * Errors
     E(..)
+
+  -- * Reader
   , R(..)
+  , LogOptions(..)
+  , basicEnv
+
+  -- * Writer
   , W(..)
   , Log(..)
-  , LogOptions(..)
-  , printLogWith
-  , S(..)
-  , P(..)
-
+  , Url
   , HttpVerb(..)
-
+  , HttpResponse(..)
+  , Color(..)
+  , printLogWith
   , errorMessage
 
+  -- * State
+  , S(..)
   , basicState
-  , basicEnv
-  , Url
 
-  , HttpResponse
-  , readHttpResponse
+  -- * Prompt
+  , P(..)
 ) where
 
 
+
+import Control.Concurrent.MVar
+  ( MVar )
+import Control.Exception
+  ( IOException )
+import Control.Lens
+  ( preview, (^.) )
 import Data.Aeson
   ( Value, decode )
-import Data.Aeson.Lens
-  ( _Value )
-import Control.Exception (IOException)
-import Data.Time (UTCTime)
-import Data.ByteString.Lazy (ByteString, fromStrict)
-import System.IO (Handle, stdout, stdin)
-import System.IO.Error
-  ( ioeGetFileName, ioeGetLocation, ioeGetErrorString )
-import Control.Concurrent.MVar (MVar)
-import Network.HTTP.Client
-  ( HttpException(..), CookieJar, Response, responseCookieJar
-  , responseBody, responseHeaders, responseVersion, responseStatus
-  , HttpExceptionContent(StatusCodeException) )
-import Network.HTTP.Types (HttpVersion, Status, ResponseHeaders)
-import qualified Network.Wreq as Wreq (Options, defaults, responseStatus)
-import Network.Wreq.Session (Session)
-import Control.Lens
 import Data.Aeson.Encode.Pretty
   ( encodePretty )
+import Data.Aeson.Lens
+  ( _Value )
+import Data.ByteString.Lazy
+  ( ByteString, fromStrict )
 import Data.ByteString.Lazy.Char8
   ( unpack, pack )
+import Data.Time
+  ( UTCTime )
+import Network.HTTP.Client
+  ( HttpException(..), CookieJar, HttpExceptionContent(StatusCodeException) )
+import Network.HTTP.Types
+  ( HttpVersion, Status, ResponseHeaders )
+import qualified Network.Wreq as Wreq
+  ( Options, defaults, responseStatus )
+import Network.Wreq.Session
+  ( Session )
+import System.IO
+  ( Handle, stdout, stdin )
+import System.IO.Error
+  ( ioeGetFileName, ioeGetLocation, ioeGetErrorString )
 
 
 
+-- | Error type
 data E e
   = E_Http HttpException
   | E_IO IOException
   | E_Json
-  | E e
+  | E e -- ^ Client-supplied error type.
 
 
 
+-- | Generic session environment.
 data R e w r = R
-  { _httpErrorInject :: HttpException -> Maybe e
-  , _logOptions :: LogOptions e w
+  { _logOptions :: LogOptions e w
   , _logHandle :: Handle
-  , _logLock :: MVar ()
-  , _stdout :: Handle
-  , _stdin :: Handle
+  , _logLock :: MVar () -- ^ Lock used to prevent race conditions when writing to the log.
+  , _stdout :: Handle -- ^ Handle to treat as @stdout@.
+  , _stdin :: Handle -- ^ Handle to treat as @stdin@.
   , _uid :: String
-  , _userEnv :: r
+  , _httpErrorInject :: HttpException -> Maybe e -- ^ Function for elevating 'HttpException's to a client-supplied error type.
+  , _userEnv :: r -- ^ Client-supplied environment type.
   }
 
+
+
+-- | Options for tweaking the logs.
 data LogOptions e w = LogOptions
-  { _logColor :: Bool
-  , _logJson :: Bool
-  , _logSilent :: Bool
-  , _printUserError :: Bool -> e -> String
-  , _printUserLog :: Bool -> w -> String
+  { _logColor :: Bool -- ^ Toggle color
+  , _logJson :: Bool -- ^ Toggle JSON pretty printing
+  , _logSilent :: Bool -- ^ Toggle to silence the logs
+  , _printUserError :: Bool -> e -> String -- ^ Printer for client-supplied error type; the boolean toggles JSON pretty printing.
+  , _printUserLog :: Bool -> w -> String -- ^ Printer for client-supplied log type; the boolean toggles JSON pretty printing.
   }
 
-basicEnv :: MVar () -> (Bool -> e -> String) -> (Bool -> w -> String) -> r -> R e w r
+
+
+-- | Environment constructor
+basicEnv
+  :: MVar () -- ^ Lock; used to prevent race conditions when writing to the log.
+  -> (Bool -> e -> String) -- ^ Printer for client-supplied error type; the boolean argument toggles JSON pretty printing.
+  -> (Bool -> w -> String) -- ^ Printer for client-supplied log type; the boolean argument toggles JSON pretty printing.
+  -> r -- ^ Client-supplied environment value.
+  -> R e w r
 basicEnv lock printError printLog r = R
   { _httpErrorInject = const Nothing
   , _logOptions = LogOptions
@@ -95,12 +133,16 @@ basicEnv lock printError printLog r = R
 
 
 
+-- | Log type
 data W e w = W [(UTCTime, Log e w)]
 
 instance Monoid (W e w) where
   mempty = W []
   mappend (W a1) (W a2) = W (a1 ++ a2)
 
+
+
+-- | Log entry type
 data Log e w
   = L_Comment String
   | L_Request HttpVerb Url Wreq.Options (Maybe ByteString)
@@ -111,11 +153,12 @@ data Log e w
   | L_HttpError HttpException
   | L_IOError IOException
   | L_JsonError
-  | L_Error e
-  | L_Log w
+  | L_Error e -- ^ Client-supplied error type
+  | L_Log w -- ^ Client-supplied log entry type
 
 type Url = String
 
+-- | Used in the logs
 data HttpVerb
   = DELETE | GET | POST
   deriving Show
@@ -128,16 +171,7 @@ data HttpResponse = HttpResponse
   , _responseCookieJar :: CookieJar
   } deriving Show
 
--- | Convert a `Response ByteString` into an `HttpResponse`.
-readHttpResponse :: Response ByteString -> HttpResponse
-readHttpResponse r = HttpResponse
-  { _responseStatus = responseStatus r
-  , _responseVersion = responseVersion r
-  , _responseHeaders = responseHeaders r
-  , _responseBody = responseBody r
-  , _responseCookieJar = responseCookieJar r
-  }
-
+-- | Convert errors to log entries
 errorMessage :: E e -> Log e w
 errorMessage e = case e of
   E_Http err -> L_HttpError err
@@ -145,6 +179,7 @@ errorMessage e = case e of
   E_Json -> L_JsonError
   E e -> L_Error e
 
+-- | Used to specify colors for user-supplied log entries.
 data Color
   = Red | Blue | Green | Yellow | Magenta
 
@@ -218,6 +253,7 @@ printEntryWith asJson printError printLog entry = case entry of
 
 
 
+-- | Render a log entry
 printLogWith :: LogOptions e w -> (UTCTime, String, Log e w) -> Maybe String
 printLogWith opt@LogOptions{..} (timestamp, uid, entry) = do
   if _logSilent
@@ -237,24 +273,26 @@ printLogWith opt@LogOptions{..} (timestamp, uid, entry) = do
 
 
 
-
+-- | State type
 data S s = S
   { _httpOptions :: Wreq.Options
   , _httpSession :: Maybe Session
-  , _lastResponse :: Maybe HttpResponse
   , _userState :: s
   }
 
+
+
+-- | State constructor
 basicState :: s -> S s
 basicState s = S
   { _httpOptions = Wreq.defaults
   , _httpSession = Nothing
-  , _lastResponse = Nothing
   , _userState = s
   }
 
 
 
+-- | Atomic effects
 data P p a where
   HPutStrLn :: Handle -> String -> P p ()
   HPutStrLnBlocking :: MVar () -> Handle -> String -> P p ()
