@@ -22,9 +22,26 @@ source-repository head
 library
   default-language: Haskell2010
   hs-source-dirs: src
-  build-depends: base >=4.7 && <5
+
+  build-depends:
+      base >=4.7 && <5
+
+    , aeson >=1.2.4.0 && <1.3
+    , aeson-pretty >=0.8.5 && <0.9
+    , bytestring >=0.10.8.2 && <0.11
+    , http-client >=0.5.10 && <0.6
+    , http-types >=0.12.1 && <0.13
+    , lens >=4.16 && <4.17
+    , lens-aeson >=1.0.2 && <1.1
+    , time >=1.8.0.2 && <1.9
+    , wreq >=0.5.2 && <0.6
+
   exposed-modules:
       Control.Monad.Script
+    , Control.Monad.Script.Http
+    , Control.Monad.Script.Http.Types
+    , Control.Monad.Script.Http.Types.IO
+    , Control.Monad.Script.Http.Types.MockIO
 
 
 executable script-monad-exe

@@ -109,7 +109,6 @@ instance (Monoid w) => Functor (Script e r w s p) where
 ask
   :: (Monoid w)
   => Script e r w s p r
-
 ask = Script $ \(s,r) -> \end _ ->
   end (Right r, s, mempty)
 
@@ -119,7 +118,6 @@ local
   :: (r -> r)
   -> Script e r w s p a
   -> Script e r w s p a
-
 local = transport
 
 
@@ -128,7 +126,6 @@ transport
   :: (r2 -> r1)
   -> Script e r1 w s p a
   -> Script e r2 w s p a
-
 transport f x = Script $ \(s,r) -> \end cont ->
   runScript x (s, f r) end cont
 
@@ -138,7 +135,6 @@ reader
   :: (Monoid w)
   => (r -> a)
   -> Script e r w s p a
-
 reader f = fmap f ask
 
 
@@ -146,7 +142,6 @@ reader f = fmap f ask
 get
   :: (Monoid w)
   => Script e r w s p s
-
 get = Script $ \(s,_) -> \end _ ->
   end (Right s, s, mempty)
 
@@ -156,7 +151,6 @@ put
   :: (Monoid w)
   => s
   -> Script e r w s p ()
-
 put s = Script $ \(_,_) -> \end _ ->
   end (Right (), s, mempty)
 
@@ -166,7 +160,6 @@ modify
   :: (Monoid w)
   => (s -> s)
   -> Script e r w s p ()
-
 modify f = Script $ \(s,_) -> \end _ ->
   end (Right (), f s, mempty)
 
@@ -176,7 +169,6 @@ modify'
   :: (Monoid w)
   => (s -> s)
   -> Script e r w s p ()
-
 modify' f = Script $ \(s,_) -> \end _ ->
   end (Right (), f $! s, mempty)
 
@@ -186,7 +178,6 @@ gets
   :: (Monoid w)
   => (s -> a)
   -> Script e r w s p a
-
 gets f = Script $ \(s,_) -> \end _ ->
   end (Right (f s), s, mempty)
 
@@ -195,7 +186,6 @@ gets f = Script $ \(s,_) -> \end _ ->
 tell
   :: w
   -> Script e r w s p ()
-
 tell w = Script $ \(s,_) -> \end _ ->
   end (Right (), s, w)
 
@@ -204,7 +194,6 @@ tell w = Script $ \(s,_) -> \end _ ->
 listen
   :: Script e r w s p a
   -> Script e r w s p (a,w)
-
 listen x = Script $ \(r,s) -> \end cont ->
   runScript x (r,s)
     (\(y,s,w) -> end (fmap (,w) y, s, w)) cont
@@ -214,7 +203,6 @@ listen x = Script $ \(r,s) -> \end cont ->
 pass
   :: Script e r w s p (a, w -> w)
   -> Script e r w s p a
-
 pass x = Script $ \(r,s) -> \end cont ->
   let
     end' (z,s1,w) = case z of
@@ -229,7 +217,6 @@ censor
   :: (w -> w)
   -> Script e r w s p a
   -> Script e r w s p a
-
 censor f x = pass $ Script $ \(s,r) -> \end cont ->
   let
     end' (z,s1,w) = case z of
@@ -244,7 +231,6 @@ except
   :: (Monoid w)
   => Either e a
   -> Script e r w s p a
-
 except z = Script $ \(s,_) -> \end _ ->
   end (z, s, mempty)
 
@@ -255,7 +241,6 @@ triage
   => (e1 -> e2)
   -> Script e1 r w s p a
   -> Script e2 r w s p a
-
 triage f x = Script $ \(s,r) -> \end cont ->
   let
     end' (z,s1,w) = case z of
@@ -269,8 +254,7 @@ triage f x = Script $ \(s,r) -> \end cont ->
 throw
   :: (Monoid w)
   => e
-  -> Script e r w s p ()
-
+  -> Script e r w s p a
 throw e = Script $ \(s,_) -> \end _ ->
   end (Left e, s, mempty)
 
@@ -280,7 +264,6 @@ catch
   :: Script e r w s p a
   -> (e -> Script e r w s p a)
   -> Script e r w s p a
-
 catch x h = Script $ \(s,r) -> \end cont ->
   let
     end' (z,s1,w) = case z of
@@ -294,6 +277,5 @@ prompt
   :: (Monoid w)
   => p a
   -> Script e r w s p a
-
 prompt p = Script $ \(s,_) -> \end cont ->
   cont p (\a -> end (Right a, s, mempty))
