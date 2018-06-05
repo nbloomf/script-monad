@@ -36,6 +36,7 @@ module Control.Monad.Script.Http (
   , prompt
 
   , E(..)
+  , JsonError(..)
   , R(..)
   , basicEnv
   , S(..)
@@ -50,6 +51,7 @@ module Control.Monad.Script.Http (
   , wait
 
   , throwError
+  , throwJsonError
 
   , httpGet
   , httpSilentGet
@@ -234,6 +236,13 @@ throwError
 throwError e = do
   logNow $ errorMessage e
   throw e
+
+throwJsonError
+  :: JsonError
+  -> Http e r w s p a
+throwJsonError e = do
+  logNow $ errorMessage $ E_Json e
+  throw $ E_Json e
 
 
 comment
