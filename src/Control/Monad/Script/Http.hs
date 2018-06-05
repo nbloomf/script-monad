@@ -39,6 +39,7 @@ module Control.Monad.Script.Http (
   , JsonError(..)
   , R(..)
   , LogOptions(..)
+  , userLog
   , basicEnv
   , S(..)
   , basicState

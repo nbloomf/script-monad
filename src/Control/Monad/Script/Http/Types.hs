@@ -24,6 +24,7 @@ module Control.Monad.Script.Http.Types (
   -- * Writer
   , W(..)
   , Log(..)
+  , userLog
   , Url
   , HttpVerb(..)
   , HttpResponse(..)
@@ -152,6 +153,14 @@ data W e w = W [(UTCTime, Log e w)]
 instance Monoid (W e w) where
   mempty = W []
   mappend (W a1) (W a2) = W (a1 ++ a2)
+
+userLog :: W e w -> [w]
+userLog (W ws) = foo ws
+  where
+    foo [] = []
+    foo ((_,v):vs) = case v of
+      L_Log u -> u : foo vs
+      _ -> foo vs
 
 
 
