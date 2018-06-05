@@ -35,6 +35,7 @@ module Control.Monad.Script.Http (
 
   , prompt
 
+  , E(..)
   , R(..)
   , basicEnv
   , S(..)
@@ -43,6 +44,8 @@ module Control.Monad.Script.Http (
 
   , comment
   , wait
+
+  , throwError
 
   , httpGet
   , httpSilentGet
