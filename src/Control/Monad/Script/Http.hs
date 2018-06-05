@@ -42,6 +42,9 @@ module Control.Monad.Script.Http (
   , basicState
   , W(..)
 
+  , Url
+  , Color(..)
+
   , comment
   , wait
 
