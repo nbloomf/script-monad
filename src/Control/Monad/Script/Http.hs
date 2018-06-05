@@ -42,6 +42,7 @@ module Control.Monad.Script.Http (
   , S(..)
   , basicState
   , W(..)
+  , P(..)
 
   , Url
   , Color(..)
