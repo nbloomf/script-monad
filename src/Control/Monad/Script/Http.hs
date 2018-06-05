@@ -53,6 +53,7 @@ module Control.Monad.Script.Http (
 
   , comment
   , wait
+  , log
 
   , throwError
   , throwJsonError
@@ -232,6 +233,11 @@ logNow msg = do
     Nothing -> return ()
     Just str -> prompt $ HPutStrLnBlocking _logLock _logHandle str
   tell $ W [(time, msg)]
+
+log
+  :: w
+  -> Http e r w s p ()
+log = logNow . L_Log
 
 
 throwError
