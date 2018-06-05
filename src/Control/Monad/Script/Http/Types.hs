@@ -14,6 +14,7 @@ Types and helper functions for effects in the 'Http' monad.
 module Control.Monad.Script.Http.Types (
   -- * Errors
     E(..)
+  , JsonError(..)
 
   -- * Reader
   , R(..)
@@ -70,6 +71,7 @@ import System.IO
   ( Handle, stdout, stdin )
 import System.IO.Error
   ( ioeGetFileName, ioeGetLocation, ioeGetErrorString )
+import qualified Data.Text as T (Text)
 
 
 
@@ -77,8 +79,19 @@ import System.IO.Error
 data E e
   = E_Http HttpException
   | E_IO IOException
-  | E_Json
+  | E_Json JsonError
   | E e -- ^ Client-supplied error type.
+
+
+
+-- | Represents the kinds of errors that can occur when parsing and decoding JSON.
+data JsonError
+  = JsonError -- ^ A generic JSON error; try not to use this.
+  | JsonParseError -- ^ A failed parse.
+  | JsonKeyDoesNotExist T.Text -- ^ An attempt to look up the value of a key that does not exist on an object.
+  | JsonKeyLookupOffObject T.Text -- ^ An attempt to look up the value of a key on something other than an object.
+  | JsonConstructError String -- ^ A failed attempt to convert a `Value` to some other type.
+  deriving (Eq, Show)
 
 
 
@@ -152,7 +165,7 @@ data Log e w
   | L_Pause Int
   | L_HttpError HttpException
   | L_IOError IOException
-  | L_JsonError
+  | L_JsonError JsonError
   | L_Error e -- ^ Client-supplied error type
   | L_Log w -- ^ Client-supplied log entry type
 
@@ -176,7 +189,7 @@ errorMessage :: E e -> Log e w
 errorMessage e = case e of
   E_Http err -> L_HttpError err
   E_IO err -> L_IOError err
-  E_Json -> L_JsonError
+  E_Json err -> L_JsonError err
   E e -> L_Error e
 
 -- | Used to specify colors for user-supplied log entries.
@@ -245,7 +258,7 @@ printEntryWith asJson printError printLog entry = case entry of
 
   L_IOError e -> (Red, unwords [ show $ ioeGetFileName e, ioeGetLocation e, ioeGetErrorString e ])
 
-  L_JsonError -> (Red, "JSON Error")
+  L_JsonError e -> (Red, "JSON Error: " ++ show e)
 
   L_Error e -> (Red, unwords [ "ERROR", printError asJson e ])
 

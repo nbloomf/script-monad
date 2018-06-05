@@ -44,6 +44,7 @@ module Control.Monad.Script.Http (
 
   , Url
   , Color(..)
+  , HttpResponse(..)
 
   , comment
   , wait
@@ -62,18 +63,27 @@ module Control.Monad.Script.Http (
 
   , evalIO
 
+  , parseJson
+  , lookupKeyJson
+  , constructFromJson
+
   , MockIO(..)
   , evalMockIO
 ) where
 
-import Control.Monad (Functor(..), Monad(..), ap)
 import Control.Applicative (Applicative(..))
+import Control.Monad (Functor(..), Monad(..), ap)
+import Control.Lens (preview)
+import Data.Aeson (Value(Object), Result(Success,Error), FromJSON, fromJSON)
+import Data.Aeson.Lens (_Value)
 import Data.ByteString.Lazy (ByteString)
 import Data.Either (Either(..))
 import Data.Function (($), (.))
+import Data.HashMap.Strict (lookup)
 import Data.Int (Int)
 import Data.Maybe (Maybe(..))
 import Data.String (String)
+import Data.Text (Text)
 import Data.Typeable (Typeable)
 
 import qualified Control.Monad.Script as S
@@ -359,4 +369,27 @@ wait
 wait k = do
   logNow $ L_Pause k
   prompt $ ThreadDelay k
+
+
+
+-- | Decode a `ByteString` to an `Value`.
+parseJson :: ByteString -> Http e r w s p Value
+parseJson bytes = case preview _Value bytes of
+  Just value -> return value
+  Nothing -> throwError $ E_Json JsonParseError
+
+
+-- | Object member lookup.
+lookupKeyJson :: Text -> Value -> Http e r w s p Value
+lookupKeyJson key (Object obj) = case lookup key obj of
+  Nothing -> throwError $ E_Json (JsonKeyDoesNotExist key)
+  Just value -> return value
+lookupKey key _ = throwError $ E_Json (JsonKeyLookupOffObject key)
+
+
+-- | Decode a `A.Value` to some other type.
+constructFromJson :: (FromJSON a) => Value -> Http e r w s p a
+constructFromJson value = case fromJSON value of
+  Success x -> return x
+  Error msg -> throwError $ E_Json (JsonConstructError msg)
 
