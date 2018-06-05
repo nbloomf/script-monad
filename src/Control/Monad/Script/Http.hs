@@ -37,6 +37,7 @@ module Control.Monad.Script.Http (
 
   , E(..)
   , JsonError(..)
+  , printE
   , R(..)
   , LogOptions(..)
   , userLog

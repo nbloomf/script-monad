@@ -15,6 +15,7 @@ module Control.Monad.Script.Http.Types (
   -- * Errors
     E(..)
   , JsonError(..)
+  , printE
 
   -- * Reader
   , R(..)
@@ -82,6 +83,13 @@ data E e
   | E_IO IOException
   | E_Json JsonError
   | E e -- ^ Client-supplied error type.
+
+printE :: (e -> String) -> E e -> String
+printE f e = case e of
+  E_Http err -> show err
+  E_IO err -> show err
+  E_Json err -> show err
+  E err -> f err
 
 
 
