@@ -16,14 +16,14 @@ module Control.Monad.Script.Http (
     Http()
   , execHttpM
 
-  -- ** Error
+  -- * Error
   , catch
 
   , E(..)
   , JsonError(..)
   , printE
 
-  -- ** Reader
+  -- * Reader
   , ask
   , local
   , reader
@@ -33,18 +33,18 @@ module Control.Monad.Script.Http (
   , basicLogOptions
   , basicEnv
 
-  -- ** Writer
+  -- * Writer
   , W()
   , logEntries
 
-  -- ** State
+  -- * State
   , modify
   , gets
 
   , S(..)
   , basicState
 
-  -- ** Prompt
+  -- * Prompt
   , prompt
 
   , P(..)
@@ -52,7 +52,7 @@ module Control.Monad.Script.Http (
   , HttpResponse(..)
   , evalIO
 
-  -- ** API
+  -- * API
   , comment
   , wait
   , log
@@ -70,6 +70,10 @@ module Control.Monad.Script.Http (
   , parseJson
   , lookupKeyJson
   , constructFromJson
+
+  -- * Shell
+  , initShell
+  , httpShell
 ) where
 
 import Prelude hiding (lookup, log)
@@ -98,6 +102,8 @@ import Data.ByteString.Lazy.Char8
   ( unpack, pack )
 import Data.HashMap.Strict
   ( lookup )
+import Data.IORef
+  ( IORef, newIORef, readIORef, writeIORef )
 import Data.Text
   ( Text )
 import Data.Time
@@ -731,3 +737,30 @@ constructFromJson :: (FromJSON a) => Value -> Http e r w s p a
 constructFromJson value = case fromJSON value of
   Success x -> return x
   Error msg -> throwError $ E_Json (JsonConstructError msg)
+
+
+
+
+
+-- | Initialize a context for running an HTTP shell interaction.
+initShell
+  :: S s
+  -> R e w r
+  -> IO (IORef (S s, R e w r))
+initShell s r =
+  newIORef (s,r)
+
+-- | Execute an `Http` action in the shell.
+httpShell
+  :: (Show e)
+  => IORef (S s, R e w r)
+  -> (forall a. p a -> IO a)
+  -> Http e r w s p a
+  -> IO a
+httpShell ref eval session = do
+  (st1,env) <- readIORef ref
+  (result, st2, _) <- execHttpM st1 env (evalIO eval) session
+  writeIORef ref (st2,env)
+  case result of
+    Left err -> error $ printE show err
+    Right ok -> return ok
