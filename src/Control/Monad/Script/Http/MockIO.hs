@@ -147,11 +147,11 @@ instance Functor (MockNetwork s) where
 errorMockNetwork :: HttpException -> MockNetwork s a
 errorMockNetwork e = MockNetwork $ \s -> (Left e, s)
 
-getMockServer :: MockNetwork s (MockServer s)
-getMockServer = MockNetwork $ \s -> (Right s,s)
+getMockServer :: MockNetwork s s
+getMockServer = MockNetwork $ \s -> (Right $ unMockServer s,s)
 
-putMockServer :: MockServer s -> MockNetwork s ()
-putMockServer s = MockNetwork $ \_ -> (Right (),s)
+putMockServer :: s -> MockNetwork s ()
+putMockServer s = MockNetwork $ \_ -> (Right (), MockServer s)
 
 modifyMockServer :: (s -> s) -> MockNetwork s ()
 modifyMockServer f = MockNetwork $ \s ->
