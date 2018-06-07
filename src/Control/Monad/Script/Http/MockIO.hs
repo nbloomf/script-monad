@@ -41,6 +41,7 @@ module Control.Monad.Script.Http.MockIO (
   , checkHttpM
   , hasValueWith
   , hasErrorWith
+  , hasLogEntriesWith
   , checkHttpMockIO
   , theResult
   , hasWorldWith
@@ -64,7 +65,7 @@ import Network.HTTP.Types
 import System.IO
 
 import Control.Monad.Script.Http
-  ( P(..), E, R, W, S, Http, HttpResponse(..), execHttpM )
+  ( P(..), E, R, W, S, Http, HttpResponse(..), execHttpM, logEntries )
 
 
 
@@ -259,6 +260,12 @@ hasErrorWith
 hasErrorWith f (x,_,_) = case x of
   Left e -> f e
   Right _ -> False
+
+hasLogEntriesWith
+  :: ([w] -> Bool)
+  -> (Either (E e) t, S s, W e w)
+  -> Bool
+hasLogEntriesWith f (_,_,w) = f $ logEntries w
 
 checkHttpMockIO
   :: S s
