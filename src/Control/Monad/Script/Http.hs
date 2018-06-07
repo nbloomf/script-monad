@@ -35,6 +35,7 @@ module Control.Monad.Script.Http (
 
   -- ** Writer
   , W()
+  , logEntries
 
   -- ** State
   , modify
@@ -475,6 +476,13 @@ printLogWith opt@LogOptions{..} (timestamp, uid, entry) = do
       Just $ unwords $ filter (/= "")
         [ color c time, uid, msg ]
 
+logEntries :: W e w -> [w]
+logEntries (W xs) = entries xs
+  where
+    entries [] = []
+    entries ((_,w):ws) = case w of
+      L_Log u -> u : entries ws
+      _ -> entries ws
 
 
 
