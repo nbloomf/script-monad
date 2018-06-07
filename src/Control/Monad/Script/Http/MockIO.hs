@@ -21,6 +21,7 @@ module Control.Monad.Script.Http.MockIO (
   , putMockWorld
   , modifyMockWorld
   , modifyMockServer
+  , errorMockNetwork
   , MockNetwork(..)
   , MockServer(..)
 
@@ -142,6 +143,9 @@ instance Applicative (MockNetwork s) where
 
 instance Functor (MockNetwork s) where
   fmap f x = x >>= (return . f)
+
+errorMockNetwork :: HttpException -> MockNetwork s a
+errorMockNetwork e = MockNetwork $ \s -> (Left e, s)
 
 getMockServer :: MockNetwork s (MockServer s)
 getMockServer = MockNetwork $ \s -> (Right s,s)
