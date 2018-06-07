@@ -23,6 +23,7 @@ module Control.Monad.Script.Http.MockIO (
   , getMockServer
   , putMockServer
   , modifyMockServer
+  , checkMockServer
   , errorMockNetwork
   , MockNetwork(..)
   , MockServer(..)
@@ -158,6 +159,10 @@ putMockServer s = MockNetwork $ \_ -> (Right (), MockServer s)
 modifyMockServer :: (s -> s) -> MockNetwork s ()
 modifyMockServer f = MockNetwork $ \s ->
   (Right (), MockServer . f . unMockServer $ s)
+
+checkMockServer :: (s -> Bool) -> HttpException -> MockNetwork s ()
+checkMockServer p e = MockNetwork $ \s ->
+  (if p $ unMockServer s then Right () else Left e, s)
 
 data MockServer s = MockServer { unMockServer :: s }
 
