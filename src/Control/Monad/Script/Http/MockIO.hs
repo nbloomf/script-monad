@@ -16,6 +16,7 @@ module Control.Monad.Script.Http.MockIO (
     MockIO(..)
   , execHttpMockIO
   , evalMockIO
+  , mockIOtoIO
   , MockWorld(..)
   , getMockWorld
   , putMockWorld
@@ -123,6 +124,11 @@ execHttpMockIO
   -> ((Either (E e) t, S s, W e w), MockWorld u)
 execHttpMockIO st env eval world http =
   runMockIO (execHttpM st env (evalMockIO eval) http) world
+
+mockIOtoIO :: MockWorld u -> MockIO u a -> IO a
+mockIOtoIO world x = do
+  let (a,_) = runMockIO x world
+  return a
 
 
 
