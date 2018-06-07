@@ -45,11 +45,11 @@ checkRealIO
   -> ( String
      , String
      , Http e r w s Id t
-     , (Either (E e) t, S s, W e w) -> Bool )
+     , (Either (E e) t, S s, W e w) -> Maybe (Either (E ()) ()) )
   -> TestTree
 checkRealIO st env (name, msg, test, check) =
   testCase name $
-    isTrue msg $
+    isOk msg $
     checkHttpM st env (evalIO evalId) id check test
 
 checkMockIO
@@ -59,17 +59,19 @@ checkMockIO
   -> ( String
      , String
      , Http e r w s Id t
-     , (Either (E e) t, S s, W e w) -> Bool )
+     , (Either (E e) t, S s, W e w) -> Maybe (Either (E e) t) )
   -> TestTree
 checkMockIO st env world (name, msg, test, check) =
   testCase name $
-    isTrue msg $
+    isOk msg $
     checkHttpM st env (evalMockIO evalId) (toIO world) check test
 
-isTrue :: String -> IO Bool -> Assertion
-isTrue msg x = do
+isOk :: String -> IO (Maybe a) -> Assertion
+isOk msg x = do
   p <- x
-  assertBool msg p
+  case p of
+    Nothing -> return ()
+    Just _ -> assertFailure msg
 
 data Id a = Id a
 
@@ -87,7 +89,7 @@ theTestCases
   :: [ ( String
        , String
        , Http () () () () Id ()
-       , (Either (E ()) (), S (), W () ()) -> Bool
+       , (Either (E ()) (), S (), W () ()) -> Maybe (Either (E ()) ())
        ) ]
 theTestCases =
   [ ( "wait"
