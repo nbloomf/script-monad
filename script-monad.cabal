@@ -73,5 +73,6 @@ test-suite script-monad-test
 
   other-modules:
       Control.Monad.Script.Test
+    , Control.Monad.Script.Http.Test
     , Control.Monad.Script.Http.MockIO.Test
     , Control.Monad.Script.Http.MockIO.Test.Server
