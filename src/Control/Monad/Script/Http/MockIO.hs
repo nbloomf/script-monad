@@ -112,7 +112,7 @@ modifyMockWorld f = MockIO $ \s -> ((), f s)
 
 modifyMockServerState :: (s -> s) -> MockIO s ()
 modifyMockServerState f = modifyMockWorld $ \w -> w
-  { _serverState = f $ _serverState w
+  { _serverState = MockServer . f . unMockServer $ _serverState w
   }
 
 execHttpMockIO
@@ -157,7 +157,7 @@ putMockServer s = MockNetwork $ \_ -> (Right (),s)
 modifyMockServer :: (MockServer s -> MockServer s) -> MockNetwork s ()
 modifyMockServer f = MockNetwork $ \s -> (Right (), f s)
 
-data MockServer s = MockServer s
+data MockServer s = MockServer { unMockServer :: s }
 
 
 
