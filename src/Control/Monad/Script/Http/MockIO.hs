@@ -20,7 +20,7 @@ module Control.Monad.Script.Http.MockIO (
   , getMockWorld
   , putMockWorld
   , modifyMockWorld
-  , modifyMockServerState
+  , modifyMockServer
   , MockNetwork(..)
   , MockServer(..)
 
@@ -110,11 +110,6 @@ putMockWorld s = MockIO $ \_ -> ((),s)
 modifyMockWorld :: (MockWorld s -> MockWorld s) -> MockIO s ()
 modifyMockWorld f = MockIO $ \s -> ((), f s)
 
-modifyMockServerState :: (s -> s) -> MockIO s ()
-modifyMockServerState f = modifyMockWorld $ \w -> w
-  { _serverState = MockServer . f . unMockServer $ _serverState w
-  }
-
 execHttpMockIO
   :: S s
   -> R e w r
@@ -154,8 +149,9 @@ getMockServer = MockNetwork $ \s -> (Right s,s)
 putMockServer :: MockServer s -> MockNetwork s ()
 putMockServer s = MockNetwork $ \_ -> (Right (),s)
 
-modifyMockServer :: (MockServer s -> MockServer s) -> MockNetwork s ()
-modifyMockServer f = MockNetwork $ \s -> (Right (), f s)
+modifyMockServer :: (s -> s) -> MockNetwork s ()
+modifyMockServer f = MockNetwork $ \s ->
+  (Right (), MockServer . f . unMockServer $ s)
 
 data MockServer s = MockServer { unMockServer :: s }
 
