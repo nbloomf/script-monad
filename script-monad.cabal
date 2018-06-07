@@ -42,9 +42,7 @@ library
   exposed-modules:
       Control.Monad.Script
     , Control.Monad.Script.Http
-    , Control.Monad.Script.Http.Types
-    , Control.Monad.Script.Http.Types.IO
-    , Control.Monad.Script.Http.Types.MockIO
+    , Control.Monad.Script.Http.MockIO
 
 
 executable script-monad-exe
@@ -68,9 +66,12 @@ test-suite script-monad-test
       base >=4.7 && <5
     , script-monad
 
+    , bytestring >=0.10.8.2 && <0.11
     , tasty >=1.0.1.1 && <1.1
     , tasty-hunit >=0.10.0.1 && <0.11
     , tasty-quickcheck >=0.9.2 && <1.0
 
   other-modules:
       Control.Monad.Script.Test
+    , Control.Monad.Script.Http.MockIO.Test
+    , Control.Monad.Script.Http.MockIO.Test.Server

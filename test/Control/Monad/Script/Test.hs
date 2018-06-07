@@ -206,7 +206,7 @@ test_script_properties_for pe pr pw ps pp pa pb pc eval =
 
 test_monad_laws :: TestTree
 test_monad_laws =
-  localOption (QuickCheckTests 1000) $
+  localOption (QuickCheckTests 500) $
   testGroup "Script properties"
     [ test_script_properties_for pU pU pU pU pQ pU pU pU evalQ
     , test_script_properties_for pU pU pU pU pQ pB pB pB evalQ

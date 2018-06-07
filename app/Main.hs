@@ -1,5 +1,10 @@
 module Main where
 
+main :: IO ()
+main = return ()
+
+{-
+
 import System.IO hiding (putStrLn)
 import Control.Monad.Script.Http
 
@@ -27,3 +32,5 @@ test = do
   return ()
 
 doit lock = execHttpM (basicState ()) (basicEnv lock (const show) (const show) ()) (evalIO evalQ)
+-}
+
