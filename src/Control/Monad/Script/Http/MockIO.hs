@@ -20,6 +20,8 @@ module Control.Monad.Script.Http.MockIO (
   , getMockWorld
   , putMockWorld
   , modifyMockWorld
+  , getMockServer
+  , putMockServer
   , modifyMockServer
   , errorMockNetwork
   , MockNetwork(..)
