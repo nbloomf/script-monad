@@ -20,6 +20,7 @@ module Control.Monad.Script.Http.MockIO (
   , getMockWorld
   , putMockWorld
   , modifyMockWorld
+  , modifyMockServerState
   , MockNetwork(..)
   , MockServer(..)
 
@@ -108,6 +109,11 @@ putMockWorld s = MockIO $ \_ -> ((),s)
 
 modifyMockWorld :: (MockWorld s -> MockWorld s) -> MockIO s ()
 modifyMockWorld f = MockIO $ \s -> ((), f s)
+
+modifyMockServerState :: (s -> s) -> MockIO s ()
+modifyMockServerState f = modifyMockWorld $ \w -> w
+  { _serverState = f $ _serverState w
+  }
 
 execHttpMockIO
   :: S s
