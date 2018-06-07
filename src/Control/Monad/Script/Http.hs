@@ -252,6 +252,7 @@ data E e
   | E_IO IOException
   | E_Json JsonError
   | E e -- ^ Client-supplied error type.
+  deriving Show
 
 -- | Represents the kinds of errors that can occur when parsing and decoding JSON.
 data JsonError
