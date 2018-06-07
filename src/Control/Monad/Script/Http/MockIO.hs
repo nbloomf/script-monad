@@ -258,56 +258,60 @@ checkHttpM
   -> R e w r
   -> (forall a. P p a -> m a)
   -> (forall a. m a -> IO a)
-  -> ((Either (E e) t, S s, W e w) -> Bool)
+  -> ((Either (E e) t, S s, W e w) -> q)
   -> Http e r w s p t
-  -> IO Bool
+  -> IO q
 checkHttpM st env eval toIO check http =
   fmap check $ toIO $ execHttpM st env eval http
 
 hasValueWith
   :: (t -> Bool)
   -> (Either (E e) t, S s, W e w)
-  -> Bool
+  -> Maybe (Either (E e) t)
 hasValueWith f (x,_,_) = case x of
-  Right a -> f a
-  Left _ -> False
+  Left e -> Just (Left e)
+  Right a -> if f a then Nothing else Just (Right a)
 
 hasErrorWith
   :: (E e -> Bool)
   -> (Either (E e) t, S s, W e w)
-  -> Bool
+  -> Maybe (Either (E e) t)
 hasErrorWith f (x,_,_) = case x of
-  Left e -> f e
-  Right _ -> False
+  Right a -> Just (Right a)
+  Left e -> if f e then Nothing else Just (Left e)
 
 hasLogEntriesWith
   :: ([w] -> Bool)
   -> (Either (E e) t, S s, W e w)
-  -> Bool
-hasLogEntriesWith f (_,_,w) = f $ logEntries w
+  -> Maybe [w]
+hasLogEntriesWith f (_,_,w) =
+  let v = logEntries w in
+  if f v then Nothing else Just v
 
 checkHttpMockIO
   :: S s
   -> R e w r
   -> MockWorld u
   -> (forall a. P p a -> MockIO u a)
-  -> (((Either (E e) t, S s, W e w), MockWorld u) -> Bool)
+  -> (((Either (E e) t, S s, W e w), MockWorld u) -> q)
   -> Http e r w s p t
-  -> Bool
+  -> q
 checkHttpMockIO st env world eval check http =
   check $ runMockIO (execHttpM st env eval http) world
 
 theResult
   :: ((Either (E e) t, S s, W e w) -> Bool)
   -> ((Either (E e) t, S s, W e w), MockWorld u)
-  -> Bool
-theResult f (x,_) = f x
+  -> Maybe (Either (E e) t, S s, W e w)
+theResult f (x,_) =
+  if f x then Nothing else Just x
 
 hasWorldWith
   :: (MockWorld u -> Bool)
   -> ((Either (E e) t, S s, W e w), MockWorld u)
-  -> Bool
-hasWorldWith f (_,x) = f x
+  -> Maybe (MockWorld u)
+hasWorldWith f (_,x) =
+  if f x then Nothing else Just x
 
 
 
