@@ -216,10 +216,10 @@ epoch = UTCTime (ModifiedJulianDay 0) 0
 
 evalMockIO :: (p a -> MockIO s a) -> P p a -> MockIO s a
 evalMockIO eval x = case x of
-  HPutStrLn handle str -> modifyMockWorld $
+  HPutStrLn handle str -> fmap Right $ modifyMockWorld $
     \w -> w { _files = mockHPutStrLn (handle, lines str) $ _files w }
 
-  HPutStrLnBlocking _ handle str -> modifyMockWorld $
+  HPutStrLnBlocking _ handle str -> fmap Right $ modifyMockWorld $
     \w -> w { _files = mockHPutStrLn (handle, lines str) $ _files w }
 
   GetSystemTime -> do

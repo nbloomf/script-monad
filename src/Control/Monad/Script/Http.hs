@@ -56,6 +56,8 @@ module Control.Monad.Script.Http (
   , comment
   , wait
   , log
+  , Control.Monad.Script.Http.hPutStrLn
+  , hPutStrLnBlocking
 
   , throwError
   , throwJsonError
@@ -76,7 +78,7 @@ module Control.Monad.Script.Http (
   , httpShell
 ) where
 
-import Prelude hiding (lookup, log)
+import Prelude hiding (lookup, log, hPutStrLn)
 
 import Control.Applicative
   ( Applicative(..), (<$>) )
@@ -515,8 +517,12 @@ basicState s = S
 
 -- | Atomic effects
 data P p a where
-  HPutStrLn :: Handle -> String -> P p ()
-  HPutStrLnBlocking :: MVar () -> Handle -> String -> P p ()
+  HPutStrLn
+    :: Handle -> String
+    -> P p (Either IOException ())
+  HPutStrLnBlocking
+    :: MVar () -> Handle -> String
+    -> P p (Either IOException ())
 
   GetSystemTime :: P p UTCTime
   ThreadDelay :: Int -> P p ()
@@ -539,12 +545,12 @@ evalIO
   -> P p a
   -> IO a
 evalIO eval x = case x of
-  HPutStrLn handle string -> do
-    hPutStrLn handle string
+  HPutStrLn handle string -> try $ do
+    System.IO.hPutStrLn handle string
     hFlush handle
 
-  HPutStrLnBlocking lock handle str -> do
-    withMVar lock (\() -> hPutStrLn handle str)
+  HPutStrLnBlocking lock handle str -> try $ do
+    withMVar lock (\() -> System.IO.hPutStrLn handle str)
     hFlush handle
 
   GetSystemTime -> fmap systemToUTCTime getSystemTime
@@ -587,7 +593,7 @@ logNow msg = do
   R{..} <- ask
   case printLogWith _logOptions (time,_uid,msg) of
     Nothing -> return ()
-    Just str -> prompt $ HPutStrLnBlocking _logLock _logHandle str
+    Just str -> hPutStrLnBlocking _logLock _logHandle str
   tell $ W [(time, msg)]
 
 comment
@@ -621,6 +627,27 @@ throwJsonError
 throwJsonError e = do
   logNow $ errorMessage $ E_Json e
   throw $ E_Json e
+
+hPutStrLn
+  :: Handle
+  -> String
+  -> Http e r w s p ()
+hPutStrLn h str = do
+  result <- prompt $ HPutStrLn h str
+  case result of
+    Right () -> return ()
+    Left e -> throwError $ E_IO e
+
+hPutStrLnBlocking
+  :: MVar ()
+  -> Handle
+  -> String
+  -> Http e r w s p ()
+hPutStrLnBlocking lock h str = do
+  result <- prompt $ HPutStrLnBlocking lock h str
+  case result of
+    Right () -> return ()
+    Left e -> throwError $ E_IO e
 
 httpGet
   :: Url
