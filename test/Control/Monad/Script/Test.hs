@@ -4,6 +4,7 @@ module Control.Monad.Script.Test (
 ) where
 
 import Data.Proxy
+import Data.Functor.Classes
 import Data.Typeable
 import Text.Show.Functions
 
@@ -25,62 +26,64 @@ as _ a = a
 
 
 scriptEq
-  :: (Eq a, Eq e, Eq s, Eq w)
+  :: (Monad m, Eq a, Eq e, Eq s, Eq w, Eq1 m)
   => s
   -> r
   -> (forall u. p u -> u)
-  -> Script e r w s p a
-  -> Script e r w s p a
+  -> ScriptT e r w s p m a
+  -> ScriptT e r w s p m a
   -> Bool
 scriptEq s r eval sc1 sc2 =
-  (execScript s r eval sc1) == (execScript s r eval sc2)
+  liftEq (==)
+    (execScriptT s r eval sc1)
+    (execScriptT s r eval sc2)
 
 
 
 prop_right_identity_law
-  :: (Monoid w, Eq a, Eq e, Eq s, Eq w)
+  :: (Monad m, Monoid w, Eq a, Eq e, Eq s, Eq w, Eq1 m)
   => Proxy e -> Proxy r -> Proxy w
-  -> Proxy s -> Proxy p -> Proxy a
+  -> Proxy s -> Proxy p -> Proxy a -> Proxy m
   -> (forall u. p u -> u)
-  -> s -> r -> Script e r w s p a -> Bool
-prop_right_identity_law _ _ _ _ _ _ eval s r x =
+  -> s -> r -> ScriptT e r w s p m a -> Bool
+prop_right_identity_law _ _ _ _ _ _ _ eval s r x =
   scriptEq s r eval (x >>= return) x
 
 
 
 prop_left_identity_law
-  :: (Monoid w, Eq b, Eq e, Eq s, Eq w)
+  :: (Monad m, Monoid w, Eq b, Eq e, Eq s, Eq w, Eq1 m)
   => Proxy e -> Proxy r -> Proxy w
-  -> Proxy s -> Proxy p -> Proxy a -> Proxy b
+  -> Proxy s -> Proxy p -> Proxy a -> Proxy b -> Proxy m
   -> (forall u. p u -> u)
-  -> s -> r -> a -> (a -> Script e r w s p b) -> Bool
-prop_left_identity_law _ _ _ _ _ _ _ eval s r a f =
+  -> s -> r -> a -> (a -> ScriptT e r w s p m b) -> Bool
+prop_left_identity_law _ _ _ _ _ _ _ _ eval s r a f =
   scriptEq s r eval (return a >>= f) (f a)
 
 
 
 prop_associativity_law
-  :: (Monoid w, Eq c, Eq e, Eq s, Eq w)
+  :: (Monad m, Monoid w, Eq c, Eq e, Eq s, Eq w, Eq1 m)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
-  -> Proxy p -> Proxy a -> Proxy b -> Proxy c
+  -> Proxy p -> Proxy a -> Proxy b -> Proxy c -> Proxy m
   -> (forall u. p u -> u)
   -> s -> r
-  -> Script e r w s p a
-  -> (a -> Script e r w s p b)
-  -> (b -> Script e r w s p c)
+  -> ScriptT e r w s p m a
+  -> (a -> ScriptT e r w s p m b)
+  -> (b -> ScriptT e r w s p m c)
   -> Bool
-prop_associativity_law _ _ _ _ _ _ _ _ eval s r x f g =
+prop_associativity_law _ _ _ _ _ _ _ _ _ eval s r x f g =
   scriptEq s r eval ((x >>= f) >>= g) (x >>= (\z -> f z >>= g))
 
 
 
 prop_tell_hom_law
-  :: (Monoid w, Eq e, Eq s, Eq w)
+  :: (Monad m, Monoid w, Eq e, Eq s, Eq w, Eq1 m)
   => Proxy e -> Proxy r -> Proxy w
-  -> Proxy s -> Proxy p
+  -> Proxy s -> Proxy p -> Proxy m
   -> (forall u. p u -> u)
-  -> s -> r -> w -> w -> Script e r w s p () -> Bool
-prop_tell_hom_law _ _ _ _ _ eval s r w1 w2 x =
+  -> s -> r -> w -> w -> ScriptT e r w s p m () -> Bool
+prop_tell_hom_law _ _ _ _ _ _ eval s r w1 w2 x =
   scriptEq s r eval
     (as x (tell w1) >> as x (tell w2))
     (as x (tell (mappend w1 w2)))
@@ -88,12 +91,12 @@ prop_tell_hom_law _ _ _ _ _ eval s r w1 w2 x =
 
 
 prop_listen_tell_law
-  :: (Monoid w, Eq e, Eq s, Eq w)
+  :: (Monad m, Monoid w, Eq e, Eq s, Eq w, Eq1 m)
   => Proxy e -> Proxy r -> Proxy w
-  -> Proxy s -> Proxy p
+  -> Proxy s -> Proxy p -> Proxy m
   -> (forall u. p u -> u)
-  -> s -> r -> w -> Script e r w s p () -> Bool
-prop_listen_tell_law _ _ _ _ _ eval s r w x =
+  -> s -> r -> w -> ScriptT e r w s p m () -> Bool
+prop_listen_tell_law _ _ _ _ _ _ eval s r w x =
   scriptEq s r eval
     (listen (as x (tell w)))
     ((as x (tell w)) >> return ((),w))
@@ -101,12 +104,12 @@ prop_listen_tell_law _ _ _ _ _ eval s r w x =
 
 
 prop_censor_tell_law
-  :: (Monoid w, Eq e, Eq s, Eq w)
+  :: (Monad m, Monoid w, Eq e, Eq s, Eq w, Eq1 m)
   => Proxy e -> Proxy r -> Proxy w
-  -> Proxy s -> Proxy p
+  -> Proxy s -> Proxy p -> Proxy m
   -> (forall u. p u -> u)
-  -> s -> r -> (w -> w) -> w -> Script e r w s p () -> Bool
-prop_censor_tell_law _ _ _ _ _ eval s r f w x =
+  -> s -> r -> (w -> w) -> w -> ScriptT e r w s p m () -> Bool
+prop_censor_tell_law _ _ _ _ _ _ eval s r f w x =
   scriptEq s r eval
     (censor f (as x (tell w)))
     (as x (tell (f w)))
@@ -114,12 +117,12 @@ prop_censor_tell_law _ _ _ _ _ eval s r f w x =
 
 
 prop_get_put_law
-  :: (Monoid w, Eq e, Eq s, Eq w)
+  :: (Monad m, Monoid w, Eq e, Eq s, Eq w, Eq1 m)
   => Proxy e -> Proxy r -> Proxy w
-  -> Proxy s -> Proxy p
+  -> Proxy s -> Proxy p -> Proxy m
   -> (forall u. p u -> u)
-  -> s -> r -> Script e r w s p s -> Bool
-prop_get_put_law _ _ _ _ _ eval s r x =
+  -> s -> r -> ScriptT e r w s p m s -> Bool
+prop_get_put_law _ _ _ _ _ _ eval s r x =
   scriptEq s r eval
     ((as x get) >>= put)
     (return ())
@@ -127,12 +130,12 @@ prop_get_put_law _ _ _ _ _ eval s r x =
 
 
 prop_put_put_law
-  :: (Monoid w, Eq e, Eq s, Eq w)
+  :: (Monad m, Monoid w, Eq e, Eq s, Eq w, Eq1 m)
   => Proxy e -> Proxy r -> Proxy w
-  -> Proxy s -> Proxy p
+  -> Proxy s -> Proxy p -> Proxy m
   -> (forall u. p u -> u)
-  -> s -> r -> s -> s -> Script e r w s p () -> Bool
-prop_put_put_law _ _ _ _ _ eval s r u v x =
+  -> s -> r -> s -> s -> ScriptT e r w s p m () -> Bool
+prop_put_put_law _ _ _ _ _ _ eval s r u v x =
   scriptEq s r eval
     ((as x (put u)) >> put v)
     (as x (put v))
@@ -140,12 +143,12 @@ prop_put_put_law _ _ _ _ _ eval s r u v x =
 
 
 prop_put_get_law
-  :: (Monoid w, Eq e, Eq s, Eq w)
+  :: (Monad m, Monoid w, Eq e, Eq s, Eq w, Eq1 m)
   => Proxy e -> Proxy r -> Proxy w
-  -> Proxy s -> Proxy p
+  -> Proxy s -> Proxy p -> Proxy m
   -> (forall u. p u -> u)
-  -> s -> r -> s -> Script e r w s p () -> Bool
-prop_put_get_law _ _ _ _ _ eval s r u x =
+  -> s -> r -> s -> ScriptT e r w s p m () -> Bool
+prop_put_get_law _ _ _ _ _ _ eval s r u x =
   scriptEq s r eval
     ((as x (put u)) >> get)
     ((as x (put u)) >> return u)
@@ -153,17 +156,17 @@ prop_put_get_law _ _ _ _ _ eval s r u x =
 
 
 test_script_properties_for
-  :: ( Monoid w, Eq a, Eq b, Eq c, Eq e, Eq s, Eq w, Show s, Show r, Show a, Show w
+  :: ( Monad m, Monoid w, Eq a, Eq b, Eq c, Eq e, Eq s, Eq w, Show s, Show r, Show a, Show w
      , Arbitrary s, Arbitrary r, Arbitrary a, Arbitrary b, Arbitrary c, Arbitrary w
      , CoArbitrary a, CoArbitrary b, CoArbitrary c, CoArbitrary w, CoArbitrary s
-     , Typeable a, Typeable b, Typeable c, Typeable e
-     , Typeable r, Typeable w, Typeable s, Typeable p
+     , Typeable a, Typeable b, Typeable c, Typeable e, Eq1 m
+     , Typeable r, Typeable w, Typeable s, Typeable p, Typeable m
      )
   => Proxy e -> Proxy r -> Proxy w -> Proxy s -> Proxy p
-  -> Proxy a -> Proxy b -> Proxy c
+  -> Proxy a -> Proxy b -> Proxy c -> Proxy m
   -> (forall u. p u -> u)
   -> TestTree
-test_script_properties_for pe pr pw ps pp pa pb pc eval =
+test_script_properties_for pe pr pw ps pp pa pb pc pm eval =
   let
     label = "Script " ++
       show (typeRep pe) ++ " " ++
@@ -173,32 +176,33 @@ test_script_properties_for pe pr pw ps pp pa pb pc eval =
       show (typeRep pp) ++ ", " ++
       show (typeRep pa) ++ ", " ++
       show (typeRep pb) ++ ", " ++
-      show (typeRep pc) 
+      show (typeRep pc) ++ ", " ++
+      show (typeRep pm)
   in
     testGroup label $
       [ testGroup "Monad Laws" $
           [ testProperty "x >>= return === x" $
-            prop_right_identity_law pe pr pw ps pp pa eval
+            prop_right_identity_law pe pr pw ps pp pa pm eval
           , testProperty "return a >>= f === f a" $
-            prop_left_identity_law pe pr pw ps pp pa pb eval
+            prop_left_identity_law pe pr pw ps pp pa pb pm eval
           , testProperty "(x >>= f) >>= g === x >>= (\\z -> f z >>= g)" $
-            prop_associativity_law pe pr pw ps pp pa pb pc eval
+            prop_associativity_law pe pr pw ps pp pa pb pc pm eval
           ]
       , testGroup "Writer Laws" $
           [ testProperty "tell u >> tell v === tell (mappend u v)" $
-            prop_tell_hom_law pe pr pw ps pp eval
+            prop_tell_hom_law pe pr pw ps pp pm eval
           , testProperty "listen (tell w) === tell w >> return ((),w)" $
-            prop_listen_tell_law pe pr pw ps pp eval
+            prop_listen_tell_law pe pr pw ps pp pm eval
           , testProperty "censor f (tell w) === tell (f w)" $
-            prop_censor_tell_law pe pr pw ps pp eval
+            prop_censor_tell_law pe pr pw ps pp pm eval
           ]
       , testGroup "State Laws" $
           [ testProperty "get >>= put === return ()" $
-            prop_get_put_law pe pr pw ps pp eval
+            prop_get_put_law pe pr pw ps pp pm eval
           , testProperty "put a >> put b === put b" $
-            prop_put_put_law pe pr pw ps pp eval
+            prop_put_put_law pe pr pw ps pp pm eval
           , testProperty "put s >> get === put s >> return s" $
-            prop_put_get_law pe pr pw ps pp eval
+            prop_put_get_law pe pr pw ps pp pm eval
           ]
       ]
 
@@ -208,27 +212,49 @@ test_monad_laws :: TestTree
 test_monad_laws =
   localOption (QuickCheckTests 500) $
   testGroup "Script properties"
-    [ test_script_properties_for pU pU pU pU pQ pU pU pU evalQ
-    , test_script_properties_for pU pU pU pU pQ pB pB pB evalQ
-    , test_script_properties_for pU pU pU pU pQ pI pI pI evalQ
-    , test_script_properties_for pU pU pU pU pQ pI pI pB evalQ
-    , test_script_properties_for pU pU pU pU pQ pI pB pI evalQ
-    , test_script_properties_for pU pU pU pU pQ pB pI pI evalQ
-    , test_script_properties_for pU pU pU pU pQ pS pS pS evalQ
-    , test_script_properties_for pU pU pU pU pQ pS pS pI evalQ
-    , test_script_properties_for pU pU pU pU pQ pS pI pS evalQ
-    , test_script_properties_for pU pU pU pU pQ pI pS pS evalQ
+    [ test_script_properties_for pU pU pU pU pQ pU pU pU pId evalQ
+    , test_script_properties_for pU pU pU pU pQ pB pB pB pId evalQ
+    , test_script_properties_for pU pU pU pU pQ pI pI pI pId evalQ
+    , test_script_properties_for pU pU pU pU pQ pI pI pB pId evalQ
+    , test_script_properties_for pU pU pU pU pQ pI pB pI pId evalQ
+    , test_script_properties_for pU pU pU pU pQ pB pI pI pId evalQ
+    , test_script_properties_for pU pU pU pU pQ pS pS pS pId evalQ
+    , test_script_properties_for pU pU pU pU pQ pS pS pI pId evalQ
+    , test_script_properties_for pU pU pU pU pQ pS pI pS pId evalQ
+    , test_script_properties_for pU pU pU pU pQ pI pS pS pId evalQ
 
-    , test_script_properties_for pS pS pS pS pQ pU pU pU evalQ
-    , test_script_properties_for pS pS pS pS pQ pB pB pB evalQ
-    , test_script_properties_for pS pS pS pS pQ pI pI pI evalQ
-    , test_script_properties_for pS pS pS pS pQ pI pI pB evalQ
-    , test_script_properties_for pS pS pS pS pQ pI pB pI evalQ
-    , test_script_properties_for pS pS pS pS pQ pB pI pI evalQ
-    , test_script_properties_for pS pS pS pS pQ pS pS pS evalQ
-    , test_script_properties_for pS pS pS pS pQ pS pS pI evalQ
-    , test_script_properties_for pS pS pS pS pQ pS pI pS evalQ
-    , test_script_properties_for pS pS pS pS pQ pI pS pS evalQ
+    , test_script_properties_for pS pS pS pS pQ pU pU pU pId evalQ
+    , test_script_properties_for pS pS pS pS pQ pB pB pB pId evalQ
+    , test_script_properties_for pS pS pS pS pQ pI pI pI pId evalQ
+    , test_script_properties_for pS pS pS pS pQ pI pI pB pId evalQ
+    , test_script_properties_for pS pS pS pS pQ pI pB pI pId evalQ
+    , test_script_properties_for pS pS pS pS pQ pB pI pI pId evalQ
+    , test_script_properties_for pS pS pS pS pQ pS pS pS pId evalQ
+    , test_script_properties_for pS pS pS pS pQ pS pS pI pId evalQ
+    , test_script_properties_for pS pS pS pS pQ pS pI pS pId evalQ
+    , test_script_properties_for pS pS pS pS pQ pI pS pS pId evalQ
+
+    , test_script_properties_for pU pU pU pU pQ pU pU pU pMb evalQ
+    , test_script_properties_for pU pU pU pU pQ pB pB pB pMb evalQ
+    , test_script_properties_for pU pU pU pU pQ pI pI pI pMb evalQ
+    , test_script_properties_for pU pU pU pU pQ pI pI pB pMb evalQ
+    , test_script_properties_for pU pU pU pU pQ pI pB pI pMb evalQ
+    , test_script_properties_for pU pU pU pU pQ pB pI pI pMb evalQ
+    , test_script_properties_for pU pU pU pU pQ pS pS pS pMb evalQ
+    , test_script_properties_for pU pU pU pU pQ pS pS pI pMb evalQ
+    , test_script_properties_for pU pU pU pU pQ pS pI pS pMb evalQ
+    , test_script_properties_for pU pU pU pU pQ pI pS pS pMb evalQ
+
+    , test_script_properties_for pS pS pS pS pQ pU pU pU pMb evalQ
+    , test_script_properties_for pS pS pS pS pQ pB pB pB pMb evalQ
+    , test_script_properties_for pS pS pS pS pQ pI pI pI pMb evalQ
+    , test_script_properties_for pS pS pS pS pQ pI pI pB pMb evalQ
+    , test_script_properties_for pS pS pS pS pQ pI pB pI pMb evalQ
+    , test_script_properties_for pS pS pS pS pQ pB pI pI pMb evalQ
+    , test_script_properties_for pS pS pS pS pQ pS pS pS pMb evalQ
+    , test_script_properties_for pS pS pS pS pQ pS pS pI pMb evalQ
+    , test_script_properties_for pS pS pS pS pQ pS pI pS pMb evalQ
+    , test_script_properties_for pS pS pS pS pQ pI pS pS pMb evalQ
     ]
 
 
@@ -243,3 +269,6 @@ pU = Proxy :: Proxy ()
 pB = Proxy :: Proxy Bool
 pI = Proxy :: Proxy Int
 pS = Proxy :: Proxy String
+
+pId = Proxy :: Proxy Id
+pMb = Proxy :: Proxy Maybe
