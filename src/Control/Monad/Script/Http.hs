@@ -16,52 +16,59 @@ module Control.Monad.Script.Http (
     Http()
   , execHttpM
 
-  -- * Error
-  , catch
+  -- * HttpT
+  , HttpT()
+  , execHttpTM
+  , liftHttpT
 
-  , E(..)
-  , JsonError(..)
-  , printE
+  -- * Error
+  , throwError
+  , throwJsonError
+  , throwHttpException
+  , throwIOException
+  , catchError
+  , catchJsonError
+  , catchHttpException
+  , catchIOException
+  , E()
 
   -- * Reader
   , ask
   , local
   , reader
-
   , R(..)
+  , basicEnv
+  , trivialEnv
   , LogOptions(..)
   , basicLogOptions
-  , basicEnv
+  , trivialLogOptions
 
   -- * Writer
-  , W()
   , logEntries
+  , W()
 
   -- * State
-  , modify
   , gets
-
+  , modify
   , S(..)
   , basicState
 
   -- * Prompt
   , prompt
-
   , P(..)
-  , Url
-  , HttpResponse(..)
   , evalIO
+  , evalMockIO
 
   -- * API
   , comment
   , wait
-  , log
+  , logEntry
+
+  -- ** IO
   , Control.Monad.Script.Http.hPutStrLn
   , hPutStrLnBlocking
 
-  , throwError
-  , throwJsonError
-
+  -- ** HTTP calls
   , httpGet
   , httpSilentGet
   , httpPost
@@ -69,16 +76,21 @@ module Control.Monad.Script.Http (
   , httpDelete
   , httpSilentDelete
 
+  -- ** JSON
   , parseJson
   , lookupKeyJson
   , constructFromJson
 
-  -- * Shell
-  , initShell
-  , httpShell
+  -- * Types
+  , JsonError(..)
+  , HttpResponse(..)
+
+  -- * Testing
+  , checkHttpM
+  , checkHttpTM
 ) where
 
-import Prelude hiding (lookup, log, hPutStrLn)
+import Prelude hiding (lookup)
 
 import Control.Applicative
   ( Applicative(..), (<$>) )
@@ -102,10 +114,14 @@ import Data.ByteString.Lazy
   ( ByteString, fromStrict, readFile, writeFile )
 import Data.ByteString.Lazy.Char8
   ( unpack, pack )
+import Data.Functor.Identity
+  ( Identity() )
 import Data.HashMap.Strict
   ( lookup )
 import Data.IORef
   ( IORef, newIORef, readIORef, writeIORef )
+import Data.String
+  ( fromString )
 import Data.Text
   ( Text )
 import Data.Time
@@ -123,7 +139,7 @@ import Network.HTTP.Client
 import Network.HTTP.Types
   ( HttpVersion, Status, ResponseHeaders )
 import qualified Network.Wreq as Wreq
-  ( Options, getWith, postWith, deleteWith, defaults, responseStatus )
+  ( Options, getWith, postWith, deleteWith, defaults, responseStatus, headers )
 import qualified Network.Wreq.Session as S
   ( Session, newSession, getWith, postWith, deleteWith )
 import System.IO
@@ -131,120 +147,186 @@ import System.IO
   , hFlush, hGetLine, hPutStr, hPutChar, stdout )
 import System.IO.Error
   ( ioeGetFileName, ioeGetLocation, ioeGetErrorString )
+import Test.QuickCheck
+  ( Property, Arbitrary(..), Gen )
 
 import qualified Control.Monad.Script as S
+import Network.HTTP.Client.Extras
+import Data.Aeson.Extras
+import Data.MockIO
+import Data.MockIO.FileSystem
 
 
 
-
-
--- | An HTTP session returning an @a@, writing to a log of type @W e w@, reading from an environment of type @R e w r@, with state of type @S s@, throwing errors of type @E e@, and performing effectful computations described by @P p a@.
---
--- Behind the scenes @Http@ is a stack of reader, writer, state, error, and prompt monads.
-newtype Http e r w s p a = Http
-  { http :: S.Script (E e) (R e w r) (W e w) (S s) (P p) a
+-- | An HTTP session returning an @a@, writing to a log of type @W e w@, reading from an environment of type @R e w r@, with state of type @S s@, throwing errors of type @E e@, performing effectful computations described by @P p a@, and with inner monad @m@.
+newtype HttpT e r w s p m a = HttpT
+  { httpT :: S.ScriptT (E e) (R e w r) (W e w) (S s) (P p) m a
   } deriving Typeable
 
--- | Execute an HTTP session.
-execHttpM
-  :: (Monad m)
-  => S s -- ^ Initial state
-  -> R e w r -- ^ Environment
-  -> (forall a. P p a -> m a) -- ^ Effect evaluator
-  -> Http e r w s p t
-  -> m (Either (E e) t, S s, W e w)
-execHttpM s r p = S.execScriptM s r p . http
+-- | An HTTP session returning an @a@, writing to a log of type @W e w@, reading from an environment of type @R e w r@, with state of type @S s@, throwing errors of type @E e@, performing effectful computations described by @P p a@. `HttpT` over `Identity`.
+type Http e r w s p a = HttpT e r w s p Identity a
 
-instance Functor (Http e r w s p) where
-  fmap f = Http . fmap f . http
+instance Functor (HttpT e r w s p m) where
+  fmap f = HttpT . fmap f . httpT
 
-instance Applicative (Http e r w s p) where
+instance Applicative (HttpT e r w s p m) where
   pure = return
   (<*>) = ap
 
-instance Monad (Http e r w s p) where
-  return = Http . return
-  (Http x) >>= f = Http (x >>= (http . f))
+instance Monad (HttpT e r w s p m) where
+  return = HttpT . return
+  (HttpT x) >>= f = HttpT (x >>= (httpT . f))
 
+
+
+-- | Execute an `HttpT` session.
+execHttpTM
+  :: (Monad (m eff), Monad eff)
+  => S s -- ^ Initial state
+  -> R e w r -- ^ Environment
+  -> (forall u. P p u -> eff u) -- ^ Effect evaluator
+  -> (forall u. eff u -> m eff u) -- ^ Lift effects to the inner monad
+  -> HttpT e r w s p (m eff) t
+  -> m eff (Either (E e) t, S s, W e w)
+execHttpTM s r p lift = S.execScriptTM s r p lift . httpT
+
+-- | Turn an `HttpT` into a property; for testing with QuickCheck.
+checkHttpTM
+  :: (Monad (m eff), Monad eff)
+  => S s -- ^ Initial state
+  -> R e w r -- ^ Environment
+  -> (forall u. P p u -> eff u) -- ^ Effect evaluator
+  -> (forall u. eff u -> m eff u) -- ^ Lift effects to the inner monad
+  -> (m eff (Either (E e) t, S s, W e w) -> IO q) -- ^ Condense to `IO`
+  -> (q -> Bool) -- ^ Result check
+  -> HttpT e r w s p (m eff) t
+  -> Property
+checkHttpTM s r eval lift cond check =
+  S.checkScriptTM s r eval lift cond check . httpT
+
+-- | Execute an `Http` session.
+execHttpM
+  :: (Monad eff)
+  => S s -- ^ Initial state
+  -> R e w r -- ^ Environment
+  -> (forall u. P p u -> eff u) -- ^ Effect evaluator
+  -> Http e r w s p t
+  -> eff (Either (E e) t, S s, W e w)
+execHttpM s r eval = S.execScriptM s r eval . httpT
+
+-- | Turn an `Http` into a `Property`; for testing with QuickCheck.
+checkHttpM
+  :: (Monad eff)
+  => S s -- ^ Initial state
+  -> R e w r -- ^ Environment
+  -> (forall u. P p u -> eff u) -- ^ Effect evaluator
+  -> (eff (Either (E e) t, S s, W e w) -> IO q) -- ^ Condense to `IO`
+  -> (q -> Bool) -- ^ Result check
+  -> Http e r w s p t
+  -> Property
+checkHttpM s r eval cond check =
+  S.checkScriptM s r eval cond check . httpT
+
+
+
+-- | Retrieve the environment.
 ask
-  :: Http e r w s p (R e w r)
-ask = Http S.ask
+  :: HttpT e r w s p m (R e w r)
+ask = HttpT S.ask
 
+-- | Run an action with a locally adjusted environment of the same type.
 local
   :: (R e w r -> R e w r)
-  -> Http e r w s p a
-  -> Http e r w s p a
-local f = Http . S.local f . http
+  -> HttpT e r w s p m a
+  -> HttpT e r w s p m a
+local f = HttpT . S.local f . httpT
 
+-- | Run an action with a locally adjusted environment of a possibly different type.
 transport
   :: (R e w r2 -> R e w r1)
-  -> Http e r1 w s p a
-  -> Http e r2 w s p a
-transport f = Http . S.transport f . http
+  -> HttpT e r1 w s p m a
+  -> HttpT e r2 w s p m a
+transport f = HttpT . S.transport f . httpT
 
+-- | Retrieve the image of the environment under a given function.
 reader
   :: (R e w r -> a)
-  -> Http e r w s p a
-reader f = Http (S.reader f)
+  -> HttpT e r w s p m a
+reader f = HttpT (S.reader f)
 
+-- | Retrieve the current state.
 get
-  :: Http e r w s p (S s)
-get = Http S.get
+  :: HttpT e r w s p m (S s)
+get = HttpT S.get
 
+-- | Replace the state.
 put
   :: S s
-  -> Http e r w s p ()
-put s = Http (S.put s)
+  -> HttpT e r w s p m ()
+put s = HttpT (S.put s)
 
+-- | Modify the current state strictly.
 modify
   :: (S s -> S s)
-  -> Http e r w s p ()
-modify f = Http (S.modify' f)
+  -> HttpT e r w s p m ()
+modify f = HttpT (S.modify' f)
 
+-- | Retrieve the image of the current state under a given function.
 gets
   :: (S s -> a)
-  -> Http e r w s p a
-gets f = Http (S.gets f)
+  -> HttpT e r w s p m a
+gets f = HttpT (S.gets f)
 
--- | Do not export; we want to only allow writes to the log via functions that call `logNow`.
+-- | Do not export; we want to only allow writes to the log via functions that call @logNow@.
 tell
   :: W e w
-  -> Http e r w s p ()
-tell w = Http (S.tell w)
+  -> HttpT e r w s p m ()
+tell w = HttpT (S.tell w)
 
+-- | Run an action that returns a value and a log-adjusting function, and apply the function to the local log.
 pass
-  :: Http e r w s p (a, W e w -> W e w)
-  -> Http e r w s p a
-pass = Http . S.pass . http
+  :: HttpT e r w s p m (a, W e w -> W e w)
+  -> HttpT e r w s p m a
+pass = HttpT . S.pass . httpT
 
+-- | Run an action, applying a function to the local log.
 censor
   :: (W e w -> W e w)
-  -> Http e r w s p a
-  -> Http e r w s p a
-censor f = Http . S.censor f . http
+  -> HttpT e r w s p m a
+  -> HttpT e r w s p m a
+censor f = HttpT . S.censor f . httpT
 
+-- | Inject an 'Either' into a 'Script'.
 except
   :: Either (E e) a
-  -> Http e r w s p a
-except e = Http (S.except e)
+  -> HttpT e r w s p m a
+except e = HttpT (S.except e)
 
+-- | Raise an error
 throw
   :: E e
-  -> Http e r w s p a
-throw e = Http (S.throw e)
+  -> HttpT e r w s p m a
+throw e = HttpT (S.throw e)
 
+-- | Run an action, applying a handler in case of an error result.
 catch
-  :: Http e r w s p a
-  -> (E e -> Http e r w s p a)
-  -> Http e r w s p a
-catch x f = Http (S.catch (http x) (http . f))
+  :: HttpT e r w s p m a -- ^ Computation that may raise an error
+  -> (E e -> HttpT e r w s p m a) -- ^ Handler
+  -> HttpT e r w s p m a
+catch x f = HttpT (S.catch (httpT x) (httpT . f))
 
+-- | Inject an atomic effect.
 prompt
   :: P p a
-  -> Http e r w s p a
-prompt p = Http (S.prompt p)
+  -> HttpT e r w s p m a
+prompt p = HttpT (S.prompt p)
 
-
+-- | Lift a value from the inner monad
+liftHttpT
+  :: (Monad m)
+  => m a
+  -> HttpT e r w s p m a
+liftHttpT = HttpT . S.lift
 
 
 
@@ -256,27 +338,77 @@ data E e
   | E e -- ^ Client-supplied error type.
   deriving Show
 
--- | Represents the kinds of errors that can occur when parsing and decoding JSON.
-data JsonError
-  = JsonError -- ^ A generic JSON error; try not to use this.
-  | JsonParseError -- ^ A failed parse.
-  | JsonKeyDoesNotExist Text -- ^ An attempt to look up the value of a key that does not exist on an object.
-  | JsonKeyLookupOffObject Text -- ^ An attempt to look up the value of a key on something other than an object.
-  | JsonConstructError String -- ^ A failed attempt to convert a `Value` to some other type.
-  deriving (Eq, Show)
+-- | Also logs the exception.
+throwHttpException
+  :: HttpException
+  -> HttpT e r w s p m a
+throwHttpException e = do
+  logNow $ errorMessage $ E_Http e
+  throw $ E_Http e
 
--- | Pretty printer for errors.
-printE
-  :: (e -> String) -- ^ Pretty printer for client-supplied error type.
-  -> E e
-  -> String
-printE f e = case e of
-  E_Http err -> show err
-  E_IO err -> show err
-  E_Json err -> show err
-  E err -> f err
+-- | Re-throws other error types.
+catchHttpException
+  :: HttpT e r w s p m a
+  -> (HttpException -> HttpT e r w s p m a) -- ^ Handler
+  -> HttpT e r w s p m a
+catchHttpException x handler = catch x $ \err ->
+  case err of
+    E_Http e -> handler e
+    _ -> throw err
 
+-- | Also logs the exception.
+throwIOException
+  :: IOException
+  -> HttpT e r w s p m a
+throwIOException e = do
+  logNow $ errorMessage $ E_IO e
+  throw $ E_IO e
 
+-- | Re-throws other error types.
+catchIOException
+  :: HttpT e r w s p m a
+  -> (IOException -> HttpT e r w s p m a) -- ^ Handler
+  -> HttpT e r w s p m a
+catchIOException x handler = catch x $ \err ->
+  case err of
+    E_IO e -> handler e
+    _ -> throw err
+
+-- | Also logs the exception.
+throwJsonError
+  :: JsonError
+  -> HttpT e r w s p m a
+throwJsonError e = do
+  logNow $ errorMessage $ E_Json e
+  throw $ E_Json e
+
+-- | Re-throws other error types.
+catchJsonError
+  :: HttpT e r w s p m a
+  -> (JsonError -> HttpT e r w s p m a) -- ^ Handler
+  -> HttpT e r w s p m a
+catchJsonError x handler = catch x $ \err ->
+  case err of
+    E_Json e -> handler e
+    _ -> throw err
+
+-- | Also logs the exception.
+throwError
+  :: e
+  -> HttpT e r w s p m a
+throwError e = do
+  logNow $ errorMessage $ E e
+  throw $ E e
+
+-- | Re-throws other error types.
+catchError
+  :: HttpT e r w s p m a
+  -> (e -> HttpT e r w s p m a) -- ^ Handler
+  -> HttpT e r w s p m a
+catchError x handler = catch x $ \err ->
+  case err of
+    E e -> handler e
+    _ -> throw err
 
 
 
@@ -284,18 +416,47 @@ printE f e = case e of
 data R e w r = R
   { _logOptions :: LogOptions e w
 
+  -- | Handle for printing logs
   , _logHandle :: Handle
 
   -- | Lock used to prevent race conditions when writing to the log.
-  , _logLock :: MVar ()
+  , _logLock :: Maybe (MVar ())
 
+  -- | Identifier string for the session; used to help match log entries emitted by the same session.
   , _uid :: String
 
   -- | Function for elevating 'HttpException's to a client-supplied error type.
   , _httpErrorInject :: HttpException -> Maybe e 
 
   -- | Client-supplied environment type.
-  , _userEnv :: r
+  , _env :: r
+  }
+
+-- | Environment constructor
+basicEnv
+  :: (Show e, Show w)
+  => r -- ^ Client-supplied environment value.
+  -> R e w r
+basicEnv r = R
+  { _httpErrorInject = const Nothing
+  , _logOptions = basicLogOptions
+  , _logHandle = stdout
+  , _logLock = Nothing
+  , _uid = ""
+  , _env = r
+  }
+
+-- | Environment constructor
+trivialEnv
+  :: r -- ^ Client-supplied environment value.
+  -> R e w r
+trivialEnv r = R
+  { _httpErrorInject = const Nothing
+  , _logOptions = trivialLogOptions
+  , _logHandle = stdout
+  , _logLock = Nothing
+  , _uid = ""
+  , _env = r
   }
 
 -- | Options for tweaking the logs.
@@ -309,6 +470,12 @@ data LogOptions e w = LogOptions
     -- | Toggle to silence the logs
   , _logSilent :: Bool
 
+    -- | Toggle for printing HTTP headers
+  , _logHeaders :: Bool
+
+    -- | Printer for log entries; first argument colorizes a string, and the tuple argument is (timestamp, uid, message).
+  , _logEntryPrinter :: (String -> String) -> (String, String, String) -> String
+
     -- | Printer for client-supplied error type. The boolean toggles JSON pretty printing.
   , _printUserError :: Bool -> e -> String
 
@@ -316,33 +483,37 @@ data LogOptions e w = LogOptions
   , _printUserLog :: Bool -> w -> String
   }
 
+-- | Noisy, in color, without parsing JSON responses, and using `Show` instances for user-supplied error and log types.
 basicLogOptions :: (Show e, Show w) => LogOptions e w
 basicLogOptions = LogOptions
   { _logColor = True
   , _logJson = False
   , _logSilent = False
+  , _logHeaders = True
+  , _logEntryPrinter = basicLogEntryPrinter
   , _printUserError = \_ e -> show e
   , _printUserLog = \_ w -> show w
   }
 
--- | Environment constructor
-basicEnv
-  :: (Show e, Show w)
-  => MVar ()
-  -- ^ Lock; used to prevent race conditions when writing to the log.
-  -> r
-  -- ^ Client-supplied environment value.
-  -> R e w r
-basicEnv lock r = R
-  { _httpErrorInject = const Nothing
-  , _logOptions = basicLogOptions
-  , _logHandle = stdout
-  , _logLock = lock
-  , _uid = ""
-  , _userEnv = r
+-- | Noisy, in color, without parsing JSON responses, and using trivial printers for user-supplied error and log types. For testing.
+trivialLogOptions :: LogOptions e w
+trivialLogOptions = LogOptions
+  { _logColor = True
+  , _logJson = False
+  , _logSilent = False
+  , _logHeaders = True
+  , _logEntryPrinter = basicLogEntryPrinter
+  , _printUserError = \_ _ -> "ERROR"
+  , _printUserLog = \_ _ -> "LOG"
   }
 
-
+basicLogEntryPrinter
+  :: (String -> String)
+  -> (String, String, String)
+  -> String
+basicLogEntryPrinter colorize (timestamp, uid, msg) =
+  unwords $ filter (/= "")
+    [ colorize timestamp, uid, msg ]
 
 
 
@@ -372,20 +543,12 @@ data Log e w
   | L_Log w
   deriving Show
 
-type Url = String
-
 -- | Used in the logs.
 data HttpVerb
   = DELETE | GET | POST
   deriving (Eq, Show)
 
-data HttpResponse = HttpResponse
-  { _responseStatus :: Status
-  , _responseVersion :: HttpVersion
-  , _responseHeaders :: ResponseHeaders
-  , _responseBody :: ByteString
-  , _responseCookieJar :: CookieJar
-  } deriving (Eq, Show)
+
 
 -- | Convert errors to log entries
 errorMessage :: E e -> Log e w
@@ -408,35 +571,47 @@ inColor c msg = case c of
   Magenta -> "\x1b[1;35m" ++ msg ++ "\x1b[0;39;49m"
 
 printEntryWith
-  :: Bool
+  :: Bool -- ^ Json
+  -> Bool -- ^ Headers
   -> (Bool -> e -> String)
   -> (Bool -> w -> String)
   -> Log e w
   -> (Color, String)
-printEntryWith asJson printError printLog entry = case entry of
+printEntryWith asJson showHeaders printError printLog entry = case entry of
   L_Comment msg -> (Green, msg)
 
-  L_Request verb url opt payload -> case payload of
-    Just p -> if asJson
-      then
-        let
-          json = case decode p of
-             Nothing -> "parse error:\n" ++ unpack p
-             Just v -> ('\n':) $ unpack $ encodePretty (v :: Value)
-         in (Blue, unlines [unwords [show verb, url], json])
-      else (Blue, unlines [unwords [show verb, url], unpack p])
+  L_Request verb url opt payload ->
+    let
+      head = case (asJson, showHeaders) of
+        (True,  True)  -> unpack $ encodePretty $ jsonResponseHeaders $ opt ^. Wreq.headers
+        (False, True)  -> show $ opt ^. Wreq.headers
+        (_,     False) -> ""
 
-    _ -> (Blue, unwords [show verb, url])
+      body = case (asJson, payload) of
+        (True,  Just p)  -> case decode p of
+          Nothing -> "JSON parse error:\n" ++ unpack p
+          Just v -> unpack $ encodePretty (v :: Value)
+        (False, Just p)  -> unpack p
+        (_,     Nothing) -> ""
+
+    in
+      (Blue, unlines $ filter (/= "") [unwords ["Request", show verb, url], head, body])
 
   L_SilentRequest -> (Blue, "Silent Request")
 
-  L_Response response -> if asJson
-    then
-      let
-        headers = _responseHeaders response
-        json = unpack $ encodePretty $ preview _Value $ _responseBody response
-      in (Blue, unlines ["Response", show headers, json])
-    else (Blue, show response)
+  L_Response response ->
+    let
+      head = case (asJson, showHeaders) of
+        (True,  True)  -> unpack $ encodePretty $ jsonResponseHeaders $ _responseHeaders response
+        (False, True)  -> show $ _responseHeaders response
+        (_,     False) -> ""
+
+      body = case asJson of
+        True  -> unpack $ encodePretty $ preview _Value $ _responseBody response
+        False -> show response
+
+    in
+      (Blue, unlines $ filter (/= "") ["Response", head, body])
 
   L_SilentResponse -> (Blue, "Silent Response")
 
@@ -468,8 +643,12 @@ printEntryWith asJson printError printLog entry = case entry of
   L_Log w -> (Yellow, unwords [ "INFO", printLog asJson w ])
 
 -- | Render a log entry
-printLogWith :: LogOptions e w -> (UTCTime, String, Log e w) -> Maybe String
-printLogWith opt@LogOptions{..} (timestamp, uid, entry) = do
+printLogWith
+  :: LogOptions e w
+  -> ((String -> String) -> (String, String, String) -> String)
+  -> (UTCTime, String, Log e w)
+  -> Maybe String
+printLogWith opt@LogOptions{..} printer (timestamp, uid, entry) =
   if _logSilent
     then Nothing
     else do
@@ -480,11 +659,11 @@ printLogWith opt@LogOptions{..} (timestamp, uid, entry) = do
         color :: Color -> String -> String
         color c = if _logColor then inColor c else id
 
-        (c,msg) = printEntryWith _logJson _printUserError _printUserLog entry
+        (c,msg) = printEntryWith _logJson _logHeaders _printUserError _printUserLog entry
 
-      Just $ unwords $ filter (/= "")
-        [ color c time, uid, msg ]
+      Just $ printer (color c) (time, uid, msg)
 
+-- | Extract the user-defined log entries.
 logEntries :: W e w -> [w]
 logEntries (W xs) = entries xs
   where
@@ -492,7 +671,6 @@ logEntries (W xs) = entries xs
     entries ((_,w):ws) = case w of
       L_Log u -> u : entries ws
       _ -> entries ws
-
 
 
 
@@ -510,8 +688,6 @@ basicState s = S
   , _httpSession = Nothing
   , _userState = s
   }
-
-
 
 
 
@@ -571,87 +747,122 @@ evalIO eval x = case x of
 
   P act -> eval act
 
--- | Convert an opaque `Response ByteString` into an `HttpResponse`.
-readHttpResponse :: Response ByteString -> HttpResponse
-readHttpResponse r = HttpResponse
-  { _responseStatus = responseStatus r
-  , _responseVersion = responseVersion r
-  , _responseHeaders = responseHeaders r
-  , _responseBody = responseBody r
-  , _responseCookieJar = responseCookieJar r
-  }
+-- | Basic evaluator for interpreting atomic 'Http' effects in 'MockIO'.
+evalMockIO
+  :: (p a -> MockIO s a)
+  -> P p a
+  -> MockIO s a
+evalMockIO eval x = case x of
+  HPutStrLn handle str -> do
+    incrementTimer 1
+    fmap Right $ modifyMockWorld $ \w -> w
+      { _files = appendLines handle (lines str) $ _files w }
+
+  HPutStrLnBlocking _ handle str -> do
+    incrementTimer 1
+    fmap Right $ modifyMockWorld $ \w -> w
+      { _files = appendLines handle (lines str) $ _files w }
+
+  GetSystemTime -> do
+    incrementTimer 1
+    MockWorld{..} <- getMockWorld
+    return _time
+
+  ThreadDelay k -> incrementTimer k
+
+  HttpGet _ _ url -> do
+    incrementTimer 1
+    MockWorld{..} <- getMockWorld
+    let (r,t) = unMockNetwork (_httpGet url) _serverState
+    modifyMockWorld $ \w -> w { _serverState = t }
+    return r
+
+  HttpPost _ _ url payload -> do
+    incrementTimer 1
+    MockWorld{..} <- getMockWorld
+    let (r,t) = unMockNetwork (_httpPost url payload) _serverState
+    modifyMockWorld $ \w -> w { _serverState = t }
+    return r
+
+  HttpDelete _ _ url -> do
+    incrementTimer 1
+    MockWorld{..} <- getMockWorld
+    let (r,t) = unMockNetwork (_httpDelete url) _serverState
+    modifyMockWorld $ \w -> w { _serverState = t }
+    return r
+
+  P p -> do
+    incrementTimer 1
+    eval p
 
 
 
-
-
+-- | All log statements should go through @logNow@.
 logNow
   :: Log e w
-  -> Http e r w s p ()
+  -> HttpT e r w s p m ()
 logNow msg = do
-  time <- prompt $ GetSystemTime
+  time <- prompt GetSystemTime
+  printer <- reader (_logEntryPrinter . _logOptions)
   R{..} <- ask
-  case printLogWith _logOptions (time,_uid,msg) of
+  case printLogWith _logOptions printer (time,_uid,msg) of
     Nothing -> return ()
-    Just str -> hPutStrLnBlocking _logLock _logHandle str
+    Just str -> case _logLock of
+      Just lock -> hPutStrLnBlocking lock _logHandle str
+      Nothing -> Control.Monad.Script.Http.hPutStrLn _logHandle str
   tell $ W [(time, msg)]
 
+-- | Write a comment to the log
 comment
   :: String
-  -> Http e r w s p ()
-comment msg = do
-  logNow $ L_Comment msg
+  -> HttpT e r w s p m ()
+comment msg = logNow $ L_Comment msg
 
+-- | Pause the thread
 wait
-  :: Int
-  -> Http e r w s p ()
+  :: Int -- ^ milliseconds
+  -> HttpT e r w s p m ()
 wait k = do
   logNow $ L_Pause k
   prompt $ ThreadDelay k
 
-log
+-- | Write an entry to the log
+logEntry
   :: w
-  -> Http e r w s p ()
-log = logNow . L_Log
+  -> HttpT e r w s p m ()
+logEntry = logNow . L_Log
 
-throwError
-  :: E e
-  -> Http e r w s p a
-throwError e = do
-  logNow $ errorMessage e
-  throw e
 
-throwJsonError
-  :: JsonError
-  -> Http e r w s p a
-throwJsonError e = do
-  logNow $ errorMessage $ E_Json e
-  throw $ E_Json e
 
+-- | Write a line to a handle
 hPutStrLn
   :: Handle
   -> String
-  -> Http e r w s p ()
+  -> HttpT e r w s p m ()
 hPutStrLn h str = do
   result <- prompt $ HPutStrLn h str
   case result of
     Right () -> return ()
-    Left e -> throwError $ E_IO e
+    Left e -> throwIOException e
 
+-- | Write a line to a handle, using the given `MVar` as a lock
 hPutStrLnBlocking
   :: MVar ()
   -> Handle
   -> String
-  -> Http e r w s p ()
+  -> HttpT e r w s p m ()
 hPutStrLnBlocking lock h str = do
   result <- prompt $ HPutStrLnBlocking lock h str
   case result of
     Right () -> return ()
-    Left e -> throwError $ E_IO e
+    Left e -> throwIOException e
 
+
+
+-- | Run a @GET@ request
 httpGet
   :: Url
-  -> Http e r w s p HttpResponse
+  -> HttpT e r w s p m HttpResponse
 httpGet url = do
   R{..} <- ask
   S{..} <- get
@@ -662,29 +873,31 @@ httpGet url = do
       logNow $ L_Response response
       return response
     Left err -> case _httpErrorInject err of
-      Just z -> throwError $ E z
-      Nothing -> throwError $ E_Http err
+      Just z -> throwError z
+      Nothing -> throwHttpException err
 
+-- | Run a @GET@ request, but do not write the request or response to the logs.
 httpSilentGet
   :: Url
-  -> Http e r w s p HttpResponse
+  -> HttpT e r w s p m HttpResponse
 httpSilentGet url = do
   R{..} <- ask
   S{..} <- get
-  logNow $ L_SilentRequest
+  logNow L_SilentRequest
   result <- prompt $ HttpGet _httpOptions _httpSession url
   case result of
     Right response -> do
-      logNow $ L_SilentResponse
+      logNow L_SilentResponse
       return response
     Left err -> case _httpErrorInject err of
-      Just z -> throwError $ E z
-      Nothing -> throwError $ E_Http err
+      Just z -> throwError z
+      Nothing -> throwHttpException err
 
+-- | Run a @POST@ request
 httpPost
   :: Url
-  -> ByteString
-  -> Http e r w s p HttpResponse
+  -> ByteString -- ^ Payload
+  -> HttpT e r w s p m HttpResponse
 httpPost url payload = do
   R{..} <- ask
   S{..} <- get
@@ -695,29 +908,31 @@ httpPost url payload = do
       logNow $ L_Response response
       return response
     Left err -> case _httpErrorInject err of
-      Just z -> throwError $ E z
-      Nothing -> throwError $ E_Http err
+      Just z -> throwError z
+      Nothing -> throwHttpException err
 
+-- | Run a @POST@ request, but do not write the request or response to the logs.
 httpSilentPost
   :: Url
-  -> ByteString
-  -> Http e r w s p HttpResponse
+  -> ByteString -- ^ Payload
+  -> HttpT e r w s p m HttpResponse
 httpSilentPost url payload = do
   R{..} <- ask
   S{..} <- get
-  logNow $ L_SilentRequest
+  logNow L_SilentRequest
   result <- prompt $ HttpPost _httpOptions _httpSession url payload
   case result of
     Right response -> do
-      logNow $ L_SilentResponse
+      logNow L_SilentResponse
       return response
     Left err -> case _httpErrorInject err of
-      Just z -> throwError $ E z
-      Nothing -> throwError $ E_Http err
+      Just z -> throwError z
+      Nothing -> throwHttpException err
 
+-- | Run a @DELETE@ request
 httpDelete
   :: Url
-  -> Http e r w s p HttpResponse
+  -> HttpT e r w s p m HttpResponse
 httpDelete url = do
   R{..} <- ask
   S{..} <- get
@@ -728,67 +943,52 @@ httpDelete url = do
       logNow $ L_Response response
       return response
     Left err -> case _httpErrorInject err of
-      Just z -> throwError $ E z
-      Nothing -> throwError $ E_Http err
+      Just z -> throwError z
+      Nothing -> throwHttpException err
 
+-- | Run a @DELETE@ request, but do not write the request or response to the logs.
 httpSilentDelete
   :: Url
-  -> Http e r w s p HttpResponse
+  -> HttpT e r w s p m HttpResponse
 httpSilentDelete url = do
   R{..} <- ask
   S{..} <- get
-  logNow $ L_SilentRequest
+  logNow L_SilentRequest
   result <- prompt $ HttpDelete _httpOptions _httpSession url
   case result of
     Right response -> do
-      logNow $ L_SilentResponse
+      logNow L_SilentResponse
       return response
     Left err -> case _httpErrorInject err of
-      Just z -> throwError $ E z
-      Nothing -> throwError $ E_Http err
+      Just z -> throwError z
+      Nothing -> throwHttpException err
 
--- | Decode a `ByteString` to an `Value`.
-parseJson :: ByteString -> Http e r w s p Value
+
+
+-- | Parse a `ByteString` to a JSON `Value`.
+parseJson
+  :: ByteString
+  -> HttpT e r w s p m Value
 parseJson bytes = case preview _Value bytes of
   Just value -> return value
-  Nothing -> throwError $ E_Json JsonParseError
+  Nothing -> throwJsonError $ JsonParseError bytes
 
 -- | Object member lookup.
-lookupKeyJson :: Text -> Value -> Http e r w s p Value
-lookupKeyJson key (Object obj) = case lookup key obj of
-  Nothing -> throwError $ E_Json (JsonKeyDoesNotExist key)
-  Just value -> return value
-lookupKey key _ = throwError $ E_Json (JsonKeyLookupOffObject key)
+lookupKeyJson
+  :: Text -- ^ Key name
+  -> Value -- ^ JSON object
+  -> HttpT e r w s p m Value
+lookupKeyJson key v = case v of
+  Object obj -> case lookup key obj of
+    Nothing -> throwJsonError $ JsonKeyDoesNotExist key (Object obj)
+    Just value -> return value
+  _ -> throwJsonError $ JsonKeyLookupOffObject key v
 
 -- | Decode a `A.Value` to some other type.
-constructFromJson :: (FromJSON a) => Value -> Http e r w s p a
+constructFromJson
+  :: (FromJSON a)
+  => Value
+  -> HttpT e r w s p m a
 constructFromJson value = case fromJSON value of
   Success x -> return x
-  Error msg -> throwError $ E_Json (JsonConstructError msg)
-
-
-
-
-
--- | Initialize a context for running an HTTP shell interaction.
-initShell
-  :: S s
-  -> R e w r
-  -> IO (IORef (S s, R e w r))
-initShell s r =
-  newIORef (s,r)
-
--- | Execute an `Http` action in the shell.
-httpShell
-  :: (Show e)
-  => IORef (S s, R e w r)
-  -> (forall a. p a -> IO a)
-  -> Http e r w s p a
-  -> IO a
-httpShell ref eval session = do
-  (st1,env) <- readIORef ref
-  (result, st2, _) <- execHttpM st1 env (evalIO eval) session
-  writeIORef ref (st2,env)
-  case result of
-    Left err -> error $ printE show err
-    Right ok -> return ok
+  Error msg -> throwJsonError $ JsonConstructError msg
