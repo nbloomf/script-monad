@@ -37,12 +37,19 @@ library
     , text >=1.2.3.0 && <1.3
     , time >=1.8.0.2 && <1.9
     , unordered-containers >=0.2.9.0 && <0.3
+    , vector >=0.12.0.1 && <0.13
     , wreq >=0.5.2 && <0.6
 
   exposed-modules:
       Control.Monad.Script
     , Control.Monad.Script.Http
-    , Control.Monad.Script.Http.MockIO
+    , Data.MockIO
+    , Data.MockIO.FileSystem
+
+  other-modules:
+      Data.Aeson.Extras
+    , Network.HTTP.Client.Extras
+
 
 
 executable script-monad-exe
@@ -53,6 +60,7 @@ executable script-monad-exe
   build-depends:
       base >=4.7 && <5
     , script-monad
+
 
 
 test-suite script-monad-test
@@ -74,5 +82,6 @@ test-suite script-monad-test
   other-modules:
       Control.Monad.Script.Test
     , Control.Monad.Script.Http.Test
-    , Control.Monad.Script.Http.MockIO.Test
-    , Control.Monad.Script.Http.MockIO.Test.Server
+    , Data.MockIO.Test
+    , Data.MockIO.Test.Server
+    , Data.MockIO.FileSystem.Test

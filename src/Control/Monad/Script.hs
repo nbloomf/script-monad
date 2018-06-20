@@ -20,14 +20,11 @@ See `Http` for an extended example.
 module Control.Monad.Script (
   -- * Script
     Script
-  , Id(..)
-  , execScriptC
   , execScript
   , execScriptM
 
   -- * ScriptT
   , ScriptT()
-  , execScriptTC
   , execScriptT
   , execScriptTM
   , lift
@@ -59,19 +56,36 @@ module Control.Monad.Script (
 
   -- * Prompt
   , prompt
+
+  -- * Testing
+  , checkScript
+  , checkScriptM
+  , checkScriptT
+  , checkScriptTM
 ) where
 
-import Control.Monad (ap, join)
+
+
+import Control.Monad
+  ( ap, join )
 import Data.Functor.Classes
+  ()
+import Data.Functor.Identity
+  ( Identity(..) )
 import Data.Monoid
-import Data.Typeable (Typeable)
-import Test.QuickCheck (Gen, Arbitrary(..), CoArbitrary(..))
+  ()
+import Data.Typeable
+  ( Typeable )
+import Test.QuickCheck
+  ( Property, Gen, Arbitrary(..), CoArbitrary(..) )
+import Test.QuickCheck.Monadic
+  ( monadicIO, run, assert )
 
 
 
 
 
--- | Opaque stack of error, reader, writer, state, and prompt monads.
+-- | Opaque transformer stack of error (@e@), reader (@r@), writer (@w@), state (@s@), and prompt (@p@) monads.
 newtype ScriptT e r w s p m a = ScriptT
   { runScriptT
       :: (s,r)
@@ -104,24 +118,8 @@ instance (Monoid w) => Functor (ScriptT e r w s p m) where
 
 
 
-type Script e r w s p = ScriptT e r w s p Id
-
-newtype Id a = Id { unId :: a }
-  deriving (Eq, Show, Typeable)
-
-instance Monad Id where
-  return = Id
-  (Id a) >>= f = f a
-
-instance Applicative Id where
-  pure = return
-  (<*>) = ap
-
-instance Functor Id where
-  fmap f (Id a) = Id (f a)
-
-instance Eq1 Id where
-  liftEq p (Id a) (Id b) = p a b
+-- | Opaque stack of error (@e@), reader (@r@), writer (@w@), state (@s@), and prompt (@p@) monads.
+type Script e r w s p = ScriptT e r w s p Identity
 
 
 
@@ -143,24 +141,55 @@ execScriptT
   :: (Monad m)
   => s -- ^ Initial state
   -> r -- ^ Environment
-  -> (forall u. p u -> u) -- ^ Pure evaluator
+  -> (forall u. p u -> u) -- ^ Pure effect evaluator
   -> ScriptT e r w s p m t
   -> m (Either e t, s, w)
 execScriptT s r eval =
   execScriptTC s r return (\p c -> c $ eval p)
+
+-- | Turn a `ScriptT` with a pure evaluator into a `Property`; for testing with QuickCheck. Wraps `execScriptT`.
+checkScriptT
+  :: (Monad m)
+  => s -- ^ Initial state
+  -> r -- ^ Environment
+  -> (forall u. p u -> u) -- ^ Pure effect evaluator
+  -> (m (Either e t, s, w) -> IO q) -- ^ Condense to `IO`
+  -> (q -> Bool) -- ^ Result check
+  -> ScriptT e r w s p m t
+  -> Property
+checkScriptT s r eval cond check script = monadicIO $ do
+  let result = execScriptT s r eval script
+  q <- run $ cond result
+  assert $ check q
 
 -- | Execute a 'ScriptT' with a specified inital state and environment, and with a monadic evaluator. In this case the inner monad @m@ will typically be a monad transformer over the effect monad @n@.
 execScriptTM
   :: (Monad (m n), Monad n)
   => s -- ^ Initial state
   -> r -- ^ Environment
-  -> (forall u. p u -> n u) -- ^ Monadic evaluator
-  -> (forall u. n u -> m n u) -- ^ Lift monadic effect
+  -> (forall u. p u -> n u) -- ^ Monadic effect evaluator
+  -> (forall u. n u -> m n u) -- ^ Lift effects to the inner monad
   -> ScriptT e r w s p (m n) t
   -> m n (Either e t, s, w)
 execScriptTM s r eval lift =
   execScriptTC s r return
     (\p c -> (lift $ eval p) >>= c)
+
+-- | Turn a `ScriptT` with a monadic evaluator into a `Property`; for testing with QuickCheck. Wraps `execScriptTM`.
+checkScriptTM
+  :: (Monad (m eff), Monad eff)
+  => s -- ^ Initial state
+  -> r -- ^ Environment
+  -> (forall u. p u -> eff u) -- ^ Moandic effect evaluator
+  -> (forall u. eff u -> m eff u) -- ^ Lift effects to the inner monad
+  -> (m eff (Either e t, s, w) -> IO q) -- ^ Condense to `IO`
+  -> (q -> Bool) -- ^ Result check
+  -> ScriptT e r w s p (m eff) t
+  -> Property
+checkScriptTM s r eval lift cond check script = monadicIO $ do
+  let result = execScriptTM s r eval lift script
+  q <- run $ cond result
+  assert $ check q
 
 
 
@@ -173,8 +202,8 @@ execScriptC
   -> Script e r w s p a
   -> v
 execScriptC s r end cont x =
-  let cont' p c = Id $ cont p (unId . c) in
-  unId $ runScriptT x (s,r) (Id . end) cont'
+  let cont' p c = Identity $ cont p (runIdentity . c) in
+  runIdentity $ runScriptT x (s,r) (Identity . end) cont'
 
 -- | Execute a 'Script' with a specified initial state and environment, and with a pure evaluator.
 execScript
@@ -186,19 +215,44 @@ execScript
 execScript s r eval =
   execScriptC s r id (\p c -> c $ eval p)
 
+-- | Turn a `Script` with a pure evaluator into a `Bool`; for testing with QuickCheck. Wraps `execScript`.
+checkScript
+  :: s -- ^ Initial state
+  -> r -- ^ Environment
+  -> (forall u. p u -> u) -- ^ Pure evaluator
+  -> ((Either e t, s, w) -> q) -- ^ Condense
+  -> (q -> Bool) -- ^ Result check
+  -> Script e r w s p t
+  -> Bool
+checkScript s r eval cond check script =
+  check $ cond $ execScript s r eval script
+
 -- | Execute a 'Script' with a specified inital state and environment, and with a monadic evaluator.
 execScriptM
-  :: (Monad n)
+  :: (Monad eff)
   => s -- ^ Initial state
   -> r -- ^ Environment
-  -> (forall u. p u -> n u) -- ^ Monadic evaluator
+  -> (forall u. p u -> eff u) -- ^ Monadic evaluator
   -> Script e r w s p t
-  -> n (Either e t, s, w)
+  -> eff (Either e t, s, w)
 execScriptM s r eval =
   execScriptC s r return
     (\p c -> (eval p) >>= c)
 
-
+-- | Turn a `Script` with a monadic evaluator into a `Property`; for testing with QuickCheck. Wraps `execScriptM`.
+checkScriptM
+  :: (Monad eff)
+  => s -- ^ Initial state
+  -> r -- ^ Environment
+  -> (forall u. p u -> eff u) -- ^ Moandic effect evaluator
+  -> (eff (Either e t, s, w) -> IO q) -- ^ Condense to `IO`
+  -> (q -> Bool) -- ^ Result check
+  -> Script e r w s p t
+  -> Property
+checkScriptM s r eval cond check script = monadicIO $ do
+  let result = execScriptM s r eval script
+  q <- run $ cond result
+  assert $ check q
 
 
 
@@ -248,7 +302,7 @@ get = ScriptT $ \(s,_) -> \end _ ->
 
 
 
--- | Set the state.
+-- | Replace the state.
 put
   :: (Monoid w)
   => s
@@ -362,7 +416,7 @@ triage f x = ScriptT $ \(s,r) -> \end cont ->
 
 
 
--- | Construct an error.
+-- | Raise an error.
 throw
   :: (Monoid w)
   => e
@@ -416,7 +470,7 @@ instance (Monad m, Monoid w, Arbitrary a, CoArbitrary a)
       then return $ return a
       else do
         f <- arbitrary :: Gen (a -> ScriptT e r w s p m a)
-        return $ return a >>= f >> lift (return b)
+        return $ f a >> lift (return b)
 
 instance Show (ScriptT e r w s p m a) where
   show _ = "<Script>"
