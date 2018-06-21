@@ -82,6 +82,7 @@ module Control.Monad.Script.Http (
   , constructFromJson
 
   -- * Types
+  , Url
   , JsonError(..)
   , HttpResponse(..)
 
