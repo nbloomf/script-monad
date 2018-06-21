@@ -30,6 +30,7 @@ module Control.Monad.Script.Http (
   , catchJsonError
   , catchHttpException
   , catchIOException
+  , printError
   , E()
 
   -- * Reader
@@ -337,7 +338,14 @@ data E e
   | E_IO IOException
   | E_Json JsonError
   | E e -- ^ Client-supplied error type.
-  deriving Show
+
+-- | Pretty printer for errors
+printError :: (e -> String) -> E e -> String
+printError p err = case err of
+  E_Http e -> unlines [ "HTTP Exception:", show e ]
+  E_IO e -> unlines [ "IO Exception:", show e ]
+  E_Json e -> unlines [ "JSON Error:", show e ]
+  E e -> unlines [ "Error:", p e ]
 
 -- | Also logs the exception.
 throwHttpException
