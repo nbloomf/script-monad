@@ -765,12 +765,12 @@ evalMockIO eval x = case x of
   HPutStrLn handle str -> do
     incrementTimer 1
     fmap Right $ modifyMockWorld $ \w -> w
-      { _files = appendLines handle (lines str) $ _files w }
+      { _files = appendLines (Right handle) (lines str) $ _files w }
 
   HPutStrLnBlocking _ handle str -> do
     incrementTimer 1
     fmap Right $ modifyMockWorld $ \w -> w
-      { _files = appendLines handle (lines str) $ _files w }
+      { _files = appendLines (Right handle) (lines str) $ _files w }
 
   GetSystemTime -> do
     incrementTimer 1

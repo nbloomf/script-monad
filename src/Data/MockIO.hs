@@ -112,7 +112,7 @@ incrementTimer k =
 
 -- | Just enough state to mock out a basic filesystem and HTTP server.
 data MockWorld s = MockWorld
-  { _files :: FileSystem Handle
+  { _files :: FileSystem (Either FilePath Handle)
   , _time :: UTCTime
 
   , _httpGet :: String -> MockNetwork s HttpResponse

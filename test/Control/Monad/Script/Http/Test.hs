@@ -241,7 +241,7 @@ outputContains
   -> MockWorld u
   -> Bool
 outputContains str world =
-  case getLines stdout $ _files world of
+  case getLines (Right stdout) $ _files world of
     Nothing -> False
     Just ls -> any (isSuffixOf str) ls
 
