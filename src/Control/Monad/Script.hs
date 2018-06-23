@@ -12,8 +12,6 @@ Portability : POSIX
 The addition of prompt to the monad team makes it straightforward to build effectful computations which defer the actual effects (and effect types) to an evaluator function that is both precisely controlled and easily extended. This allows us to build testable and composable API layers.
 
 The name 'Script' is meant to evoke the script of a play. In the theater sense a script is not a list of /instructions/ so much as a list of /suggestions/, and every cast gives a unique interpretation. Similarly a 'Script' is a pure value that gets an effectful interpretation from a user-supplied evaluator.
-
-See `Http` for an extended example.
 -}
 
 {-# LANGUAGE Rank2Types, TupleSections, ScopedTypeVariables #-}
