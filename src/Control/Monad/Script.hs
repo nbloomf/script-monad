@@ -162,13 +162,13 @@ checkScriptT s r eval cond check script = monadicIO $ do
 
 -- | Execute a 'ScriptT' with a specified inital state and environment, and with a monadic evaluator. In this case the inner monad @m@ will typically be a monad transformer over the effect monad @n@.
 execScriptTM
-  :: (Monad (m n), Monad n)
+  :: (Monad (m eff), Monad eff)
   => s -- ^ Initial state
   -> r -- ^ Environment
-  -> (forall u. p u -> n u) -- ^ Monadic effect evaluator
-  -> (forall u. n u -> m n u) -- ^ Lift effects to the inner monad
-  -> ScriptT e r w s p (m n) t
-  -> m n (Either e t, s, w)
+  -> (forall u. p u -> eff u) -- ^ Monadic effect evaluator
+  -> (forall u. n u -> m eff u) -- ^ Lift effects to the inner monad
+  -> ScriptT e r w s p (m eff) t
+  -> m eff (Either e t, s, w)
 execScriptTM s r eval lift =
   execScriptTC s r return
     (\p c -> (lift $ eval p) >>= c)
