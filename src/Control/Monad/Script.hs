@@ -166,7 +166,7 @@ execScriptTM
   => s -- ^ Initial state
   -> r -- ^ Environment
   -> (forall u. p u -> eff u) -- ^ Monadic effect evaluator
-  -> (forall u. n u -> m eff u) -- ^ Lift effects to the inner monad
+  -> (forall u. eff u -> m eff u) -- ^ Lift effects to the inner monad
   -> ScriptT e r w s p (m eff) t
   -> m eff (Either e t, s, w)
 execScriptTM s r eval lift =
