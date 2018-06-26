@@ -122,6 +122,8 @@ import Data.HashMap.Strict
   ( lookup )
 import Data.IORef
   ( IORef, newIORef, readIORef, writeIORef )
+import Data.List
+  ( intercalate )
 import Data.String
   ( fromString )
 import Data.Text
@@ -604,7 +606,7 @@ printEntryWith asJson showHeaders printError printLog entry = case entry of
         (_,     Nothing) -> ""
 
     in
-      (Blue, unlines $ filter (/= "") [unwords ["Request", show verb, url], head, body])
+      (Blue, intercalate "\n" $ filter (/= "") [unwords ["Request", show verb, url], head, body])
 
   L_SilentRequest -> (Blue, "Silent Request")
 
@@ -620,7 +622,7 @@ printEntryWith asJson showHeaders printError printLog entry = case entry of
         False -> show response
 
     in
-      (Blue, unlines $ filter (/= "") ["Response", head, body])
+      (Blue, intercalate "\n" $ filter (/= "") ["Response", head, body])
 
   L_SilentResponse -> (Blue, "Silent Response")
 
@@ -639,7 +641,7 @@ printEntryWith asJson showHeaders printError printLog entry = case entry of
       in
         case unpackHttpError e of
           Nothing -> (Red, show e)
-          Just (code, json) -> (Red, unlines [ unwords [ "HTTP Error Response", code], json ])
+          Just (code, json) -> (Red, intercalate "\n" [ unwords [ "HTTP Error Response", code], json ])
 
     else (Red, show e)
 
