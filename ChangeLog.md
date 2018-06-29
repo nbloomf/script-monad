@@ -2,7 +2,8 @@
 
 ## Unreleased changes
 
-(none)
+* New
+    * `catchAnyError` function
 
 ## 0.0.1
 
