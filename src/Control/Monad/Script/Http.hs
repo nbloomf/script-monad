@@ -30,6 +30,7 @@ module Control.Monad.Script.Http (
   , catchJsonError
   , catchHttpException
   , catchIOException
+  , catchAnyError
   , printError
   , E()
 
@@ -420,6 +421,20 @@ catchError x handler = catch x $ \err ->
   case err of
     E e -> handler e
     _ -> throw err
+
+catchAnyError
+  :: HttpT e r w s p m a
+  -> (e -> HttpT e r w s p m a)
+  -> (HttpException -> HttpT e r w s p m a)
+  -> (IOException -> HttpT e r w s p m a)
+  -> (JsonError -> HttpT e r w s p m a)
+  -> HttpT e r w s p m a
+catchAnyError x hE hHttp hIO hJson =
+  catch x $ \err -> case err of
+    E e -> hE e
+    E_Http e -> hHttp e
+    E_IO e -> hIO e
+    E_Json e -> hJson e
 
 
 
