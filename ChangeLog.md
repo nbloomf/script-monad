@@ -4,6 +4,7 @@
 
 * New
     * `catchAnyError` function
+    * `draft` function
 
 ## 0.0.1
 

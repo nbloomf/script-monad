@@ -41,6 +41,7 @@ module Control.Monad.Script (
 
   -- * Writer
   , tell
+  , draft
   , listen
   , pass
   , censor
@@ -346,6 +347,17 @@ tell
   -> ScriptT e r w s p m ()
 tell w = ScriptT $ \(s,_) -> \end _ ->
   end (Right (), s, w)
+
+
+
+-- | Run an action and attach the log to the result, setting the log to `mempty`.
+draft
+  :: (Monoid w)
+  => ScriptT e r w s p m a
+  -> ScriptT e r w s p m (a,w)
+draft x = ScriptT $ \(r,s) -> \end cont ->
+  runScriptT x (r,s)
+    (\(y,s,w) -> end (fmap (,w) y, s, mempty)) cont
 
 
 
