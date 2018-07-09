@@ -47,7 +47,11 @@ module Control.Monad.Script.Http (
 
   -- * Writer
   , logEntries
+  , LogSeverity(..)
+  , setLogSeverity
   , W()
+  , printHttpLogs
+  , basicLogEntryPrinter
 
   -- * State
   , gets
@@ -64,7 +68,14 @@ module Control.Monad.Script.Http (
   -- * API
   , comment
   , wait
-  , logEntry
+  , logDebug
+  , logInfo
+  , logNotice
+  , logWarning
+  , logError
+  , logCritical
+  , logAlert
+  , logEmergency
 
   -- ** IO
   , Control.Monad.Script.Http.hPutStrLn
@@ -158,6 +169,7 @@ import Test.QuickCheck
 import qualified Control.Monad.Script as S
 import Network.HTTP.Client.Extras
 import Data.Aeson.Extras
+import Data.LogSeverity
 import Data.MockIO
 import Data.MockIO.FileSystem
 
@@ -355,7 +367,7 @@ throwHttpException
   :: HttpException
   -> HttpT e r w s p m a
 throwHttpException e = do
-  logNow $ errorMessage $ E_Http e
+  logNow LogError $ errorMessage $ E_Http e
   throw $ E_Http e
 
 -- | Re-throws other error types.
@@ -373,7 +385,7 @@ throwIOException
   :: IOException
   -> HttpT e r w s p m a
 throwIOException e = do
-  logNow $ errorMessage $ E_IO e
+  logNow LogError $ errorMessage $ E_IO e
   throw $ E_IO e
 
 -- | Re-throws other error types.
@@ -391,7 +403,7 @@ throwJsonError
   :: JsonError
   -> HttpT e r w s p m a
 throwJsonError e = do
-  logNow $ errorMessage $ E_Json e
+  logNow LogError $ errorMessage $ E_Json e
   throw $ E_Json e
 
 -- | Re-throws other error types.
@@ -409,7 +421,7 @@ throwError
   :: e
   -> HttpT e r w s p m a
 throwError e = do
-  logNow $ errorMessage $ E e
+  logNow LogError $ errorMessage $ E e
   throw $ E e
 
 -- | Re-throws other error types.
@@ -442,6 +454,9 @@ catchAnyError x hE hHttp hIO hJson =
 data R e w r = R
   { _logOptions :: LogOptions e w
 
+  -- | Printer for log entries.
+  , _logEntryPrinter :: LogOptions e w -> LogEntry e w -> Maybe String
+
   -- | Handle for printing logs
   , _logHandle :: Handle
 
@@ -466,6 +481,7 @@ basicEnv
 basicEnv r = R
   { _httpErrorInject = const Nothing
   , _logOptions = basicLogOptions
+  , _logEntryPrinter = basicLogEntryPrinter
   , _logHandle = stdout
   , _logLock = Nothing
   , _uid = ""
@@ -479,6 +495,7 @@ trivialEnv
 trivialEnv r = R
   { _httpErrorInject = const Nothing
   , _logOptions = trivialLogOptions
+  , _logEntryPrinter = basicLogEntryPrinter
   , _logHandle = stdout
   , _logLock = Nothing
   , _uid = ""
@@ -496,11 +513,11 @@ data LogOptions e w = LogOptions
     -- | Toggle to silence the logs
   , _logSilent :: Bool
 
+    -- | Suppress log output below this severity
+  , _logMinSeverity :: LogSeverity
+
     -- | Toggle for printing HTTP headers
   , _logHeaders :: Bool
-
-    -- | Printer for log entries; first argument colorizes a string, and the tuple argument is (timestamp, uid, message).
-  , _logEntryPrinter :: (String -> String) -> (String, String, String) -> String
 
     -- | Printer for client-supplied error type. The boolean toggles JSON pretty printing.
   , _printUserError :: Bool -> e -> String
@@ -515,8 +532,8 @@ basicLogOptions = LogOptions
   { _logColor = True
   , _logJson = False
   , _logSilent = False
+  , _logMinSeverity = LogDebug
   , _logHeaders = True
-  , _logEntryPrinter = basicLogEntryPrinter
   , _printUserError = \_ e -> show e
   , _printUserLog = \_ w -> show w
   }
@@ -527,28 +544,52 @@ trivialLogOptions = LogOptions
   { _logColor = True
   , _logJson = False
   , _logSilent = False
+  , _logMinSeverity = LogDebug
   , _logHeaders = True
-  , _logEntryPrinter = basicLogEntryPrinter
   , _printUserError = \_ _ -> "ERROR"
   , _printUserLog = \_ _ -> "LOG"
   }
 
 basicLogEntryPrinter
-  :: (String -> String)
-  -> (String, String, String)
-  -> String
-basicLogEntryPrinter colorize (timestamp, uid, msg) =
-  unwords $ filter (/= "")
-    [ colorize timestamp, uid, msg ]
+  :: LogOptions e w
+  -> LogEntry e w
+  -> Maybe String
+basicLogEntryPrinter opt@LogOptions{..} LogEntry{..} =
+  if _logSilent || (_logEntrySeverity < _logMinSeverity)
+    then Nothing
+    else
+      let
+        colorize msg = if _logColor
+          then colorBySeverity _logEntrySeverity msg
+          else msg
+
+        timestamp :: String
+        timestamp = take 19 $ show _logEntryTimestamp
+      in
+        Just $ unwords $ filter (/= "")
+          [ colorize timestamp
+          , _logEntryUID
+          , logEntryTitle _logEntry
+          , logEntryBody opt _logEntry
+          ]
 
 
 
 -- | Log type
-data W e w = W [(UTCTime, Log e w)]
+newtype W e w = W
+  { unW :: [LogEntry e w]
+  } deriving Show
 
 instance Monoid (W e w) where
   mempty = W []
   mappend (W a1) (W a2) = W (a1 ++ a2)
+
+data LogEntry e w = LogEntry
+  { _logEntryTimestamp :: UTCTime
+  , _logEntryUID :: String
+  , _logEntrySeverity :: LogSeverity
+  , _logEntry :: Log e w
+  } deriving Show
 
 -- | Log entry type
 data Log e w
@@ -569,10 +610,47 @@ data Log e w
   | L_Log w
   deriving Show
 
+logEntryTitle :: Log e w -> LogEntryTitle
+logEntryTitle e = case e of
+  L_Comment _ -> "Comment"
+  L_Request _ _ _ _ -> "Request"
+  L_SilentRequest -> "Silent Request"
+  L_Response _ -> "Response"
+  L_SilentResponse -> "Silent Response"
+  L_Pause _ -> "Pause"
+  L_HttpError _ -> "HTTP Exception"
+  L_IOError _ -> "IO Exception"
+  L_JsonError _ -> "JSON Error"
+  L_Error _ -> "Error"
+  L_Log _ -> "Log"
+
 -- | Used in the logs.
 data HttpVerb
   = DELETE | GET | POST
   deriving (Eq, Show)
+
+-- | All log statements should go through @logNow@.
+printHttpLogs
+  :: Handle
+  -> Maybe (MVar ())
+  -> LogOptions e w
+  -> (LogOptions e w -> LogEntry e w -> Maybe String)
+  -> W e w
+  -> IO ()
+printHttpLogs handle lock opts printer (W ws) = do
+  let
+    printEntry w = 
+      case printer opts w of
+        Nothing -> return ()
+        Just str -> do
+          case lock of
+            Just lock -> withMVar lock (\() -> System.IO.hPutStrLn handle str)
+            Nothing -> System.IO.hPutStrLn handle str
+          hFlush handle
+
+  if _logSilent opts
+    then return ()
+    else mapM_ printEntry ws
 
 
 
@@ -584,36 +662,24 @@ errorMessage e = case e of
   E_Json err -> L_JsonError err
   E e -> L_Error e
 
--- | Used to specify colors for user-supplied log entries.
-data Color
-  = Red | Blue | Green | Yellow | Magenta
+type LogEntryTitle = String
+type LogEntryBody = String
 
-inColor :: Color -> String -> String
-inColor c msg = case c of
-  Red -> "\x1b[1;31m" ++ msg ++ "\x1b[0;39;49m"
-  Blue -> "\x1b[1;34m" ++ msg ++ "\x1b[0;39;49m"
-  Green -> "\x1b[1;32m" ++ msg ++ "\x1b[0;39;49m"
-  Yellow -> "\x1b[1;33m" ++ msg ++ "\x1b[0;39;49m"
-  Magenta -> "\x1b[1;35m" ++ msg ++ "\x1b[0;39;49m"
-
-printEntryWith
-  :: Bool -- ^ Json
-  -> Bool -- ^ Headers
-  -> (Bool -> e -> String)
-  -> (Bool -> w -> String)
+logEntryBody
+  :: LogOptions e w
   -> Log e w
-  -> (Color, String)
-printEntryWith asJson showHeaders printError printLog entry = case entry of
-  L_Comment msg -> (Green, msg)
+  -> LogEntryBody
+logEntryBody LogOptions{..} entry = case entry of
+  L_Comment msg -> msg
 
   L_Request verb url opt payload ->
     let
-      head = case (asJson, showHeaders) of
+      head = case (_logJson, _logHeaders) of
         (True,  True)  -> unpack $ encodePretty $ jsonResponseHeaders $ opt ^. Wreq.headers
         (False, True)  -> show $ opt ^. Wreq.headers
         (_,     False) -> ""
 
-      body = case (asJson, payload) of
+      body = case (_logJson, payload) of
         (True,  Just p)  -> case decode p of
           Nothing -> "JSON parse error:\n" ++ unpack p
           Just v -> unpack $ encodePretty (v :: Value)
@@ -621,29 +687,29 @@ printEntryWith asJson showHeaders printError printLog entry = case entry of
         (_,     Nothing) -> ""
 
     in
-      (Blue, intercalate "\n" $ filter (/= "") [unwords ["Request", show verb, url], head, body])
+      intercalate "\n" $ filter (/= "") [unwords ["Request", show verb, url], head, body]
 
-  L_SilentRequest -> (Blue, "Silent Request")
+  L_SilentRequest -> ""
 
   L_Response response ->
     let
-      head = case (asJson, showHeaders) of
+      head = case (_logJson, _logHeaders) of
         (True,  True)  -> unpack $ encodePretty $ jsonResponseHeaders $ _responseHeaders response
         (False, True)  -> show $ _responseHeaders response
         (_,     False) -> ""
 
-      body = case asJson of
+      body = case _logJson of
         True  -> unpack $ encodePretty $ preview _Value $ _responseBody response
         False -> show response
 
     in
-      (Blue, intercalate "\n" $ filter (/= "") ["Response", head, body])
+      intercalate "\n" $ filter (/= "") ["Response", head, body]
 
-  L_SilentResponse -> (Blue, "Silent Response")
+  L_SilentResponse -> ""
 
-  L_Pause k -> (Magenta, "Wait for " ++ show k ++ "μs")
+  L_Pause k -> "Wait for " ++ show k ++ "μs"
 
-  L_HttpError e -> if asJson
+  L_HttpError e -> if _logJson
     then
       let
         unpackHttpError :: HttpException -> Maybe (String, String)
@@ -655,46 +721,27 @@ printEntryWith asJson showHeaders printError printLog entry = case entry of
           _ -> Nothing
       in
         case unpackHttpError e of
-          Nothing -> (Red, show e)
-          Just (code, json) -> (Red, intercalate "\n" [ unwords [ "HTTP Error Response", code], json ])
+          Nothing -> show e
+          Just (code, json) -> intercalate "\n" [ unwords [ "HTTP Error Response", code], json ]
 
-    else (Red, show e)
+    else show e
 
-  L_IOError e -> (Red, unwords [ show $ ioeGetFileName e, ioeGetLocation e, ioeGetErrorString e ])
+  L_IOError e -> unwords [ show $ ioeGetFileName e, ioeGetLocation e, ioeGetErrorString e ]
 
-  L_JsonError e -> (Red, "JSON Error: " ++ show e)
+  L_JsonError e -> show e
 
-  L_Error e -> (Red, unwords [ "ERROR", printError asJson e ])
+  L_Error e -> unwords [ _printUserError _logJson e ]
 
-  L_Log w -> (Yellow, unwords [ "INFO", printLog asJson w ])
+  L_Log w -> unwords [ _printUserLog _logJson w ]
 
--- | Render a log entry
-printLogWith
-  :: LogOptions e w
-  -> ((String -> String) -> (String, String, String) -> String)
-  -> (UTCTime, String, Log e w)
-  -> Maybe String
-printLogWith opt@LogOptions{..} printer (timestamp, uid, entry) =
-  if _logSilent
-    then Nothing
-    else do
-      let
-        time :: String
-        time = take 19 $ show timestamp
 
-        color :: Color -> String -> String
-        color c = if _logColor then inColor c else id
-
-        (c,msg) = printEntryWith _logJson _logHeaders _printUserError _printUserLog entry
-
-      Just $ printer (color c) (time, uid, msg)
 
 -- | Extract the user-defined log entries.
 logEntries :: W e w -> [w]
 logEntries (W xs) = entries xs
   where
     entries [] = []
-    entries ((_,w):ws) = case w of
+    entries (w:ws) = case _logEntry w of
       L_Log u -> u : entries ws
       _ -> entries ws
 
@@ -825,38 +872,79 @@ evalMockIO eval x = case x of
 
 -- | All log statements should go through @logNow@.
 logNow
-  :: Log e w
+  :: LogSeverity
+  -> Log e w
   -> HttpT e r w s p m ()
-logNow msg = do
+logNow severity msg = do
   time <- prompt GetSystemTime
-  printer <- reader (_logEntryPrinter . _logOptions)
+  printer <- reader _logEntryPrinter
   R{..} <- ask
-  case printLogWith _logOptions printer (time,_uid,msg) of
+  case printer _logOptions (LogEntry time _uid severity msg) of
     Nothing -> return ()
     Just str -> case _logLock of
       Just lock -> hPutStrLnBlocking lock _logHandle str
       Nothing -> Control.Monad.Script.Http.hPutStrLn _logHandle str
-  tell $ W [(time, msg)]
+  tell $ W [LogEntry time _uid severity msg]
 
 -- | Write a comment to the log
 comment
   :: String
   -> HttpT e r w s p m ()
-comment msg = logNow $ L_Comment msg
+comment msg = logNow LogInfo $ L_Comment msg
 
 -- | Pause the thread
 wait
   :: Int -- ^ milliseconds
   -> HttpT e r w s p m ()
 wait k = do
-  logNow $ L_Pause k
+  logNow LogInfo $ L_Pause k
   prompt $ ThreadDelay k
 
 -- | Write an entry to the log
-logEntry
-  :: w
-  -> HttpT e r w s p m ()
-logEntry = logNow . L_Log
+logEntry :: LogSeverity -> w -> HttpT e r w s p m ()
+logEntry severity = logNow severity . L_Log
+
+-- | For debug level messages
+logDebug :: w -> HttpT e r w s p m ()
+logDebug = logEntry LogDebug
+
+-- | For informational messages
+logInfo :: w -> HttpT e r w s p m ()
+logInfo = logEntry LogInfo
+
+-- | For normal but significant conditions
+logNotice :: w -> HttpT e r w s p m ()
+logNotice = logEntry LogNotice
+
+-- | For warning conditions
+logWarning :: w -> HttpT e r w s p m ()
+logWarning = logEntry LogWarning
+
+-- | For error conditions
+logError :: w -> HttpT e r w s p m ()
+logError = logEntry LogError
+
+-- | For critical conditions
+logCritical :: w -> HttpT e r w s p m ()
+logCritical = logEntry LogCritical
+
+-- | Action must be taken immediately
+logAlert :: w -> HttpT e r w s p m ()
+logAlert = logEntry LogAlert
+
+-- | System is unusable
+logEmergency :: w -> HttpT e r w s p m ()
+logEmergency = logEntry LogEmergency
+
+-- | Set the severity level of all log actions in a session.
+setLogSeverity
+  :: LogSeverity
+  -> HttpT e r w s p m a
+  -> HttpT e r w s p m a
+setLogSeverity severity = censor (W . map f . unW)
+  where
+    f :: LogEntry e w -> LogEntry e w
+    f e = e { _logEntrySeverity = severity }
 
 
 
@@ -892,11 +980,11 @@ httpGet
 httpGet url = do
   R{..} <- ask
   S{..} <- get
-  logNow $ L_Request GET url _httpOptions Nothing
+  logNow LogDebug $ L_Request GET url _httpOptions Nothing
   result <- prompt $ HttpGet _httpOptions _httpSession url
   case result of
     Right response -> do
-      logNow $ L_Response response
+      logNow LogDebug $ L_Response response
       return response
     Left err -> case _httpErrorInject err of
       Just z -> throwError z
@@ -909,11 +997,11 @@ httpSilentGet
 httpSilentGet url = do
   R{..} <- ask
   S{..} <- get
-  logNow L_SilentRequest
+  logNow LogDebug L_SilentRequest
   result <- prompt $ HttpGet _httpOptions _httpSession url
   case result of
     Right response -> do
-      logNow L_SilentResponse
+      logNow LogDebug L_SilentResponse
       return response
     Left err -> case _httpErrorInject err of
       Just z -> throwError z
@@ -927,11 +1015,11 @@ httpPost
 httpPost url payload = do
   R{..} <- ask
   S{..} <- get
-  logNow $ L_Request POST url _httpOptions (Just payload)
+  logNow LogDebug $ L_Request POST url _httpOptions (Just payload)
   result <- prompt $ HttpPost _httpOptions _httpSession url payload
   case result of
     Right response -> do
-      logNow $ L_Response response
+      logNow LogDebug $ L_Response response
       return response
     Left err -> case _httpErrorInject err of
       Just z -> throwError z
@@ -945,11 +1033,11 @@ httpSilentPost
 httpSilentPost url payload = do
   R{..} <- ask
   S{..} <- get
-  logNow L_SilentRequest
+  logNow LogDebug L_SilentRequest
   result <- prompt $ HttpPost _httpOptions _httpSession url payload
   case result of
     Right response -> do
-      logNow L_SilentResponse
+      logNow LogDebug L_SilentResponse
       return response
     Left err -> case _httpErrorInject err of
       Just z -> throwError z
@@ -962,11 +1050,11 @@ httpDelete
 httpDelete url = do
   R{..} <- ask
   S{..} <- get
-  logNow $ L_Request DELETE url _httpOptions Nothing
+  logNow LogDebug $ L_Request DELETE url _httpOptions Nothing
   result <- prompt $ HttpDelete _httpOptions _httpSession url
   case result of
     Right response -> do
-      logNow $ L_Response response
+      logNow LogDebug$ L_Response response
       return response
     Left err -> case _httpErrorInject err of
       Just z -> throwError z
@@ -979,11 +1067,11 @@ httpSilentDelete
 httpSilentDelete url = do
   R{..} <- ask
   S{..} <- get
-  logNow L_SilentRequest
+  logNow LogDebug L_SilentRequest
   result <- prompt $ HttpDelete _httpOptions _httpSession url
   case result of
     Right response -> do
-      logNow L_SilentResponse
+      logNow LogDebug L_SilentResponse
       return response
     Left err -> case _httpErrorInject err of
       Just z -> throwError z

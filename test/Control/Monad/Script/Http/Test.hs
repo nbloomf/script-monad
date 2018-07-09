@@ -75,8 +75,8 @@ tests num lock = testGroup "Http"
         prop_httpSilentGet_write pU pU pU pU (evalMockIO evalId) (toIOs simpleMockWorld) undefined
       , testProperty "throwError: is logged" $
         prop_throwError_write pU pU pU pU (evalMockIO evalId) (toIOs simpleMockWorld) undefined
-      , testProperty "logEntry: is logged" $
-        prop_logEntry_write pU pU pU pU (evalMockIO evalId) (toIOs simpleMockWorld) undefined
+      , testProperty "logDebug: is logged" $
+        prop_logDebug_write pU pU pU pU (evalMockIO evalId) (toIOs simpleMockWorld) undefined
       ]
     ]
   , localOption (QuickCheckTests num) $ testGroup "Real IO"
@@ -432,18 +432,18 @@ prop_throwError _ _ _ _ eval cond x s r k err =
       catchError (throwError err)
         (\e -> if e == err then return k else return (k+1))
 
-prop_logEntry_write
+prop_logDebug_write
   :: (Monad eff)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
   -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
   -> Http e r w s p ()
   -> s -> r -> w -> Property
-prop_logEntry_write _ _ _ _ eval cond x s r w =
+prop_logDebug_write _ _ _ _ eval cond x s r w =
   checkHttpM (basicState s) (noisyEnv r) eval cond
     (hasWorld $ outputContains "LOG") $
     as x $ do
-      logEntry w
+      logDebug w
       return ()
 
 prop_logEntries_log
@@ -457,10 +457,10 @@ prop_logEntries_log _ _ _ _ eval cond x s r w1 w2 w3 =
   checkHttpM (basicState s) (testEnv r) eval cond
     (hasLog $ \w -> [w1,w2,w3] == logEntries w) $
     as x $ do
-      logEntry w1
+      logDebug w1
       comment "hey!"
-      logEntry w2
-      logEntry w3
+      logDebug w2
+      logDebug w3
       return ()
 
 prop_throwError_write
