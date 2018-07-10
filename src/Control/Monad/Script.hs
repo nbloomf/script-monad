@@ -103,7 +103,10 @@ instance (Monoid w) => Monad (ScriptT e r w s p m) where
         Right y -> do
           let h (z2,s2,w2) = end (z2, s2, mappend w1 w2)
           runScriptT (f y) (s1,r) h cont
-        Left e -> end (Left e, s1, w1)
+        Left e -> do
+          let h (_,s2,w2) = end (Left e, s2, mappend w1 w2)
+          runScriptT (return ()) (s1,r) h cont
+          
     runScriptT x (s0,r) g cont
 
 instance (Monoid w) => Applicative (ScriptT e r w s p m) where
@@ -431,21 +434,25 @@ throw
   :: (Monoid w)
   => e
   -> ScriptT e r w s p m a
-throw e = ScriptT $ \(s,_) -> \end _ ->
-  end (Left e, s, mempty)
+throw e = ScriptT $ \(s,r) -> \end cont ->
+  let end' (_,s1,w1) = end (Left e, s1, w1)
+  in runScriptT (return ()) (s,r) end' cont
 
 
 
 -- | Run an action, applying a handler in case of an error result.
 catch
-  :: ScriptT e r w s p m a
+  :: (Monoid w)
+  => ScriptT e r w s p m a
   -> (e -> ScriptT e r w s p m a)
   -> ScriptT e r w s p m a
 catch x h = ScriptT $ \(s,r) -> \end cont ->
   let
     end' (z,s1,w) = case z of
       Right y -> end (Right y, s1, w)
-      Left e -> runScriptT (h e) (s1,r) end cont
+      Left e -> do
+        let end'' (z2,s2,w2) = end (z2, s2, mappend w w2)
+        runScriptT (h e) (s1,r) end'' cont
   in
     runScriptT x (s,r) end' cont
 

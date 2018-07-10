@@ -50,6 +50,7 @@ library
 
   other-modules:
       Data.Aeson.Extras
+    , Data.LogSeverity
     , Network.HTTP.Client.Extras
 
 
