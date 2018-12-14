@@ -148,6 +148,8 @@ import Data.Typeable
   ( Typeable )
 import Data.Monoid
   ( Monoid(..) )
+import Data.Semigroup
+  ( Semigroup(..) )
 import Network.HTTP.Client
   ( HttpException(..), CookieJar, HttpExceptionContent(StatusCodeException)
   , Response, responseCookieJar, responseBody
@@ -582,9 +584,12 @@ newtype W e w = W
   { unW :: [LogEntry e w]
   } deriving Show
 
+instance Semigroup (W e w) where
+  (W a1) <> (W a2) = W (a1 ++ a2)
+
 instance Monoid (W e w) where
   mempty = W []
-  mappend (W a1) (W a2) = W (a1 ++ a2)
+  mappend = (<>)
 
 data LogEntry e w = LogEntry
   { _logEntryTimestamp :: UTCTime
