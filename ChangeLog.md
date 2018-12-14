@@ -1,6 +1,8 @@
-# Changelog for script-monad
+Changelog for script-monad
+==========================
 
-## Unreleased changes
+0.0.2
+-----
 
 * Added
     * ScriptT: `draft` function
@@ -16,7 +18,10 @@
 * Removed
     * HttpT: `logEntry` function; deprecated in favor of syslog-flavored logger functions
 
-## 0.0.1
+
+
+0.0.1
+-----
 
 * Added
     * Script and ScriptT: Hand-rolled stack of error, reader, writer, state, and prompt
