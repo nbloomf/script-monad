@@ -16,6 +16,7 @@ module Data.LogSeverity (
   , colorBySeverity
 ) where
 
+-- | [Syslog](https://en.wikipedia.org/wiki/Syslog) style log severities.
 data LogSeverity
   = LogDebug -- ^ Debug-level messages
   | LogInfo -- ^ Informational messages
@@ -27,7 +28,11 @@ data LogSeverity
   | LogEmergency -- ^ System is unusable
   deriving (Eq, Ord, Show)
 
-colorBySeverity :: LogSeverity -> String -> String
+-- | Pretty prints a simple log header.
+colorBySeverity
+  :: LogSeverity
+  -> String -- ^ Printed before the severity label; i.e. a timestamp
+  -> String
 colorBySeverity severity msg = case severity of
   LogDebug -> "\x1b[1;32m" ++ msg ++ " DEBUG \x1b[0;39;49m"
   LogInfo -> "\x1b[1;32m" ++ msg ++ " INFO \x1b[0;39;49m"

@@ -434,6 +434,7 @@ catchError x handler = catch x $ \err ->
     E e -> handler e
     _ -> throw err
 
+-- | Handle any thrown error. To handle only errors of a specific type, see @catchError@, @catchJsonError@, @catchIOException@, or @catchHttpException@.
 catchAnyError
   :: HttpT e r w s p m a
   -> (e -> HttpT e r w s p m a)
@@ -550,6 +551,7 @@ trivialLogOptions = LogOptions
   , _printUserLog = \_ _ -> "LOG"
   }
 
+-- | Simple default pretty printer for @LogEntry@s.
 basicLogEntryPrinter
   :: LogOptions e w
   -> LogEntry e w

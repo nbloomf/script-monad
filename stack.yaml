@@ -4,5 +4,4 @@ packages:
 - .
 
 extra-deps:
-- git: https://github.com/nbloomf/tasty-quickcheck-laws.git
-  commit: 65626aff77af11a21eb505201aaeab075f35c13e
+- tasty-quickcheck-laws-0.0.1
