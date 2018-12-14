@@ -1,6 +1,14 @@
 Changelog for script-monad
 ==========================
 
+0.0.2.1
+-------
+
+* Added
+    * Semigroup instance for `W`
+
+
+
 0.0.2
 -----
 
