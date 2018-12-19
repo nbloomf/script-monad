@@ -1,6 +1,30 @@
 Changelog for script-monad
 ==========================
 
+0.0.3.0
+-------
+
+This release has some significant changes to type names and signatures. The good news is that these changes make the code simpler and more modular. The bad news is that it now uses the `QuantifiedConstraints` extension, available only in GHC >=8.6.
+
+* Changed
+    * Most functions now have additional `Monad` and `MonadTrans` constraints.
+    * `ScriptT` is now `ScriptTT` and takes the effect monad as an explicit type parameter. Now acts like a monad transformer transformer.
+    * `Script` is now `ScriptT` and takes the effect monad as an explicit type parameter, reflecting its status as a monad transformer
+    * `HttpT` is now `HttpTT` and takes the effect monad as an explicit type parameter. Now acts like a monad transformer transformer.
+    * `Http` is now `HttpT` and takes the effect monad as an explicit type parameter, reflecting its status as a monad transformer
+    * `execScriptTM` is now `execScriptTT` and does not take an explicit `lift` parameter, using the generic `MonadTrans` instance instead.
+    * `checkScriptTM` is now `checkScriptTT` and does not take an explicit `lift` parameter, using the generic `MonadTrans` instance instead.
+    * `execHttpTM` is now `execHttpTT` and does not take an explicit `lift` parameter, using the generic `MonadTrans` instance instead.
+    * `checkHttpTM` is now `checkHttpTT` and does not take an explicit `lift` parameter, using the generic `MonadTrans` instance instead.
+* Removed
+    * `Script.lift`, in favor of a generic `MonadTrans` instance
+    * `liftHttpT`, in favor of a generic `MonadTrans` instance
+    * `execScriptT`, `execScript`, `checkScript`, and `checkScript`, which use a pure evaluator. These are subsumed by `ScriptTT` where the base monad is `Identity`.
+    * `execScriptM` and `checkScriptM`, which are subsumed by `ScriptTT` with the `IdentityT` transformer.
+    * `execHttpM` and `checkHttpM`, which are subsumed by `HttpTT` with the `IdentityT` transformer.
+
+
+
 0.0.2.1
 -------
 

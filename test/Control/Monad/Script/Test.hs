@@ -3,6 +3,7 @@ module Control.Monad.Script.Test (
   tests
 ) where
 
+import Control.Monad.Trans.Identity
 import Data.Proxy
 import Data.Functor.Classes
 import Data.Functor.Identity
@@ -112,25 +113,25 @@ tests num =
 
 
 
--- | `ScriptT` values are pure, so we can test them for equality.
+-- | `ScriptTT` values are pure, so we can test them for equality.
 scriptEq
-  :: (Monad m, Eq a, Eq e, Eq s, Eq w, Eq1 m)
-  => (forall u. p u -> u)
+  :: (Monad eff, Eq a, Eq e, Eq s, Eq w, Eq1 eff)
+  => (forall u. p u -> eff u)
   -> (s, r)
-  -> ScriptT e r w s p m a
-  -> ScriptT e r w s p m a
+  -> ScriptTT e r w s p IdentityT eff a
+  -> ScriptTT e r w s p IdentityT eff a
   -> Bool
 scriptEq eval (s,r) sc1 sc2 =
   liftEq (==)
-    (execScriptT s r eval sc1)
-    (execScriptT s r eval sc2)
+    (execScriptTT s r eval sc1)
+    (execScriptTT s r eval sc2)
 
 
 
 data Q a = Q a
 
-evalQ :: Q a -> a
-evalQ (Q a) = a
+evalQ :: (Monad eff) => Q a -> eff a
+evalQ (Q a) = return a
 
 pQ = Proxy :: Proxy Q
 
@@ -145,8 +146,8 @@ pLs = Proxy :: Proxy []
 pEi = Proxy :: Proxy (Either Int)
 
 pSc
-  :: Proxy e -> Proxy r -> Proxy w -> Proxy s -> Proxy p -> Proxy m
-  -> Proxy (ScriptT e r w s p m)
+  :: Proxy e -> Proxy r -> Proxy w -> Proxy s -> Proxy p -> Proxy eff
+  -> Proxy (ScriptTT e r w s p IdentityT eff)
 pSc _ _ _ _ _ _ = Proxy
 
 pSt
