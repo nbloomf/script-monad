@@ -7,19 +7,24 @@ Maintainer  : Nathan Bloomfield (nbloomf@gmail.com)
 Stability   : experimental
 Portability : POSIX
 
-A basic type and monad for describing HTTP interactions.
+A basic type and monad transformer transformer for describing HTTP interactions.
 -}
 
-{-# LANGUAGE GADTs, Rank2Types, RecordWildCards #-}
+{-#
+  LANGUAGE
+    GADTs,
+    Rank2Types,
+    RecordWildCards,
+    QuantifiedConstraints
+#-}
+
 module Control.Monad.Script.Http (
-  -- * Http
-    Http()
-  , execHttpM
+  -- * HttpT
+    HttpT()
 
   -- * HttpT
-  , HttpT()
-  , execHttpTM
-  , liftHttpT
+  , HttpTT()
+  , execHttpTT
 
   -- * Error
   , throwError
@@ -100,8 +105,7 @@ module Control.Monad.Script.Http (
   , HttpResponse(..)
 
   -- * Testing
-  , checkHttpM
-  , checkHttpTM
+  , checkHttpTT
 ) where
 
 import Prelude hiding (lookup)
@@ -116,6 +120,10 @@ import Control.Exception
   ( IOException, Exception, try )
 import Control.Monad
   ( Functor(..), Monad(..), ap )
+import Control.Monad.Trans.Class
+  ( MonadTrans(..) )
+import Control.Monad.Trans.Identity
+  ( IdentityT(..) )
 import Control.Lens
   ( preview, (^.) )
 import Data.Aeson
@@ -177,175 +185,167 @@ import Data.MockIO.FileSystem
 
 
 
--- | An HTTP session returning an @a@, writing to a log of type @W e w@, reading from an environment of type @R e w r@, with state of type @S s@, throwing errors of type @E e@, performing effectful computations described by @P p a@, and with inner monad @m@.
-newtype HttpT e r w s p m a = HttpT
-  { httpT :: S.ScriptT (E e) (R e w r) (W e w) (S s) (P p) m a
+-- | An HTTP session returning an @a@, writing to a log of type @W e w@, reading from an environment of type @R e w r@, with state of type @S s@, throwing errors of type @E e@, performing effectful computations described by @P p a@, and with inner monad @t eff@.
+newtype HttpTT e r w s p t eff a = HttpTT
+  { httpTT :: S.ScriptTT (E e) (R e w r) (W e w) (S s) (P p) t eff a
   } deriving Typeable
 
--- | An HTTP session returning an @a@, writing to a log of type @W e w@, reading from an environment of type @R e w r@, with state of type @S s@, throwing errors of type @E e@, performing effectful computations described by @P p a@. `HttpT` over `Identity`.
-type Http e r w s p a = HttpT e r w s p Identity a
+-- | An HTTP session returning an @a@, writing to a log of type @W e w@, reading from an environment of type @R e w r@, with state of type @S s@, throwing errors of type @E e@, performing effectful computations described by @P p a@, with inner monad @eff@. `HttpTT` over `IdentityT`.
+type HttpT e r w s p = HttpTT e r w s p IdentityT
 
-instance Functor (HttpT e r w s p m) where
-  fmap f = HttpT . fmap f . httpT
+instance (Monad eff, Monad (t eff), MonadTrans t)
+  => Functor (HttpTT e r w s p t eff) where
+  fmap f = HttpTT . fmap f . httpTT
 
-instance Applicative (HttpT e r w s p m) where
+instance (Monad eff, Monad (t eff), MonadTrans t)
+  => Applicative (HttpTT e r w s p t eff) where
   pure = return
   (<*>) = ap
 
-instance Monad (HttpT e r w s p m) where
-  return = HttpT . return
-  (HttpT x) >>= f = HttpT (x >>= (httpT . f))
+instance (Monad eff, Monad (t eff), MonadTrans t)
+  => Monad (HttpTT e r w s p t eff) where
+  return = HttpTT . return
+  (HttpTT x) >>= f = HttpTT (x >>= (httpTT . f))
+
+instance (MonadTrans t, forall m. (Monad m) => Monad (t m))
+  => MonadTrans (HttpTT e r w s p t) where
+  lift = HttpTT . lift
 
 
 
--- | Execute an `HttpT` session.
-execHttpTM
-  :: (Monad (m eff), Monad eff)
+
+
+-- | Execute an `HttpTT` session.
+execHttpTT
+  :: (Monad eff, Monad (t eff), MonadTrans t)
   => S s -- ^ Initial state
   -> R e w r -- ^ Environment
   -> (forall u. P p u -> eff u) -- ^ Effect evaluator
-  -> (forall u. eff u -> m eff u) -- ^ Lift effects to the inner monad
-  -> HttpT e r w s p (m eff) t
-  -> m eff (Either (E e) t, S s, W e w)
-execHttpTM s r p lift = S.execScriptTM s r p lift . httpT
+  -> HttpTT e r w s p t eff a
+  -> t eff (Either (E e) a, S s, W e w)
+execHttpTT s r p = S.execScriptTT s r p . httpTT
 
--- | Turn an `HttpT` into a property; for testing with QuickCheck.
-checkHttpTM
-  :: (Monad (m eff), Monad eff)
+-- | Turn an `HttpTT` into a property; for testing with QuickCheck.
+checkHttpTT
+  :: (Monad eff, Monad (t eff), MonadTrans t, MonadTrans t, Show q)
   => S s -- ^ Initial state
   -> R e w r -- ^ Environment
   -> (forall u. P p u -> eff u) -- ^ Effect evaluator
-  -> (forall u. eff u -> m eff u) -- ^ Lift effects to the inner monad
-  -> (m eff (Either (E e) t, S s, W e w) -> IO q) -- ^ Condense to `IO`
+  -> (t eff (Either (E e) a, S s, W e w) -> IO q) -- ^ Condense to `IO`
   -> (q -> Bool) -- ^ Result check
-  -> HttpT e r w s p (m eff) t
+  -> HttpTT e r w s p t eff a
   -> Property
-checkHttpTM s r eval lift cond check =
-  S.checkScriptTM s r eval lift cond check . httpT
-
--- | Execute an `Http` session.
-execHttpM
-  :: (Monad eff)
-  => S s -- ^ Initial state
-  -> R e w r -- ^ Environment
-  -> (forall u. P p u -> eff u) -- ^ Effect evaluator
-  -> Http e r w s p t
-  -> eff (Either (E e) t, S s, W e w)
-execHttpM s r eval = S.execScriptM s r eval . httpT
-
--- | Turn an `Http` into a `Property`; for testing with QuickCheck.
-checkHttpM
-  :: (Monad eff)
-  => S s -- ^ Initial state
-  -> R e w r -- ^ Environment
-  -> (forall u. P p u -> eff u) -- ^ Effect evaluator
-  -> (eff (Either (E e) t, S s, W e w) -> IO q) -- ^ Condense to `IO`
-  -> (q -> Bool) -- ^ Result check
-  -> Http e r w s p t
-  -> Property
-checkHttpM s r eval cond check =
-  S.checkScriptM s r eval cond check . httpT
+checkHttpTT s r eval cond check =
+  S.checkScriptTT s r eval cond check . httpTT
 
 
 
 -- | Retrieve the environment.
 ask
-  :: HttpT e r w s p m (R e w r)
-ask = HttpT S.ask
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => HttpTT e r w s p t eff (R e w r)
+ask = HttpTT S.ask
 
 -- | Run an action with a locally adjusted environment of the same type.
 local
-  :: (R e w r -> R e w r)
-  -> HttpT e r w s p m a
-  -> HttpT e r w s p m a
-local f = HttpT . S.local f . httpT
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => (R e w r -> R e w r)
+  -> HttpTT e r w s p t eff a
+  -> HttpTT e r w s p t eff a
+local f = HttpTT . S.local f . httpTT
 
 -- | Run an action with a locally adjusted environment of a possibly different type.
 transport
-  :: (R e w r2 -> R e w r1)
-  -> HttpT e r1 w s p m a
-  -> HttpT e r2 w s p m a
-transport f = HttpT . S.transport f . httpT
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => (R e w r2 -> R e w r1)
+  -> HttpTT e r1 w s p t eff a
+  -> HttpTT e r2 w s p t eff a
+transport f = HttpTT . S.transport f . httpTT
 
 -- | Retrieve the image of the environment under a given function.
 reader
-  :: (R e w r -> a)
-  -> HttpT e r w s p m a
-reader f = HttpT (S.reader f)
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => (R e w r -> a)
+  -> HttpTT e r w s p t eff a
+reader f = HttpTT (S.reader f)
 
 -- | Retrieve the current state.
 get
-  :: HttpT e r w s p m (S s)
-get = HttpT S.get
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => HttpTT e r w s p t eff (S s)
+get = HttpTT S.get
 
 -- | Replace the state.
 put
-  :: S s
-  -> HttpT e r w s p m ()
-put s = HttpT (S.put s)
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => S s
+  -> HttpTT e r w s p t eff ()
+put s = HttpTT (S.put s)
 
 -- | Modify the current state strictly.
 modify
-  :: (S s -> S s)
-  -> HttpT e r w s p m ()
-modify f = HttpT (S.modify' f)
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => (S s -> S s)
+  -> HttpTT e r w s p t eff ()
+modify f = HttpTT (S.modify' f)
 
 -- | Retrieve the image of the current state under a given function.
 gets
-  :: (S s -> a)
-  -> HttpT e r w s p m a
-gets f = HttpT (S.gets f)
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => (S s -> a)
+  -> HttpTT e r w s p t eff a
+gets f = HttpTT (S.gets f)
 
 -- | Do not export; we want to only allow writes to the log via functions that call @logNow@.
 tell
-  :: W e w
-  -> HttpT e r w s p m ()
-tell w = HttpT (S.tell w)
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => W e w
+  -> HttpTT e r w s p t eff ()
+tell w = HttpTT (S.tell w)
 
 -- | Run an action that returns a value and a log-adjusting function, and apply the function to the local log.
 pass
-  :: HttpT e r w s p m (a, W e w -> W e w)
-  -> HttpT e r w s p m a
-pass = HttpT . S.pass . httpT
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => HttpTT e r w s p t eff (a, W e w -> W e w)
+  -> HttpTT e r w s p t eff a
+pass = HttpTT . S.pass . httpTT
 
 -- | Run an action, applying a function to the local log.
 censor
-  :: (W e w -> W e w)
-  -> HttpT e r w s p m a
-  -> HttpT e r w s p m a
-censor f = HttpT . S.censor f . httpT
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => (W e w -> W e w)
+  -> HttpTT e r w s p t eff a
+  -> HttpTT e r w s p t eff a
+censor f = HttpTT . S.censor f . httpTT
 
 -- | Inject an 'Either' into a 'Script'.
 except
-  :: Either (E e) a
-  -> HttpT e r w s p m a
-except e = HttpT (S.except e)
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => Either (E e) a
+  -> HttpTT e r w s p t eff a
+except e = HttpTT (S.except e)
 
 -- | Raise an error
 throw
-  :: E e
-  -> HttpT e r w s p m a
-throw e = HttpT (S.throw e)
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => E e
+  -> HttpTT e r w s p t eff a
+throw e = HttpTT (S.throw e)
 
 -- | Run an action, applying a handler in case of an error result.
 catch
-  :: HttpT e r w s p m a -- ^ Computation that may raise an error
-  -> (E e -> HttpT e r w s p m a) -- ^ Handler
-  -> HttpT e r w s p m a
-catch x f = HttpT (S.catch (httpT x) (httpT . f))
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => HttpTT e r w s p t eff a -- ^ Computation that may raise an error
+  -> (E e -> HttpTT e r w s p t eff a) -- ^ Handler
+  -> HttpTT e r w s p t eff a
+catch x f = HttpTT (S.catch (httpTT x) (httpTT . f))
 
 -- | Inject an atomic effect.
 prompt
-  :: P p a
-  -> HttpT e r w s p m a
-prompt p = HttpT (S.prompt p)
-
--- | Lift a value from the inner monad
-liftHttpT
-  :: (Monad m)
-  => m a
-  -> HttpT e r w s p m a
-liftHttpT = HttpT . S.lift
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => P p a
+  -> HttpTT e r w s p t eff a
+prompt p = HttpTT (S.prompt p)
 
 
 
@@ -355,6 +355,7 @@ data E e
   | E_IO IOException
   | E_Json JsonError
   | E e -- ^ Client-supplied error type.
+  deriving Show
 
 -- | Pretty printer for errors
 printError :: (e -> String) -> E e -> String
@@ -366,17 +367,19 @@ printError p err = case err of
 
 -- | Also logs the exception.
 throwHttpException
-  :: HttpException
-  -> HttpT e r w s p m a
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => HttpException
+  -> HttpTT e r w s p t eff a
 throwHttpException e = do
   logNow LogError $ errorMessage $ E_Http e
   throw $ E_Http e
 
 -- | Re-throws other error types.
 catchHttpException
-  :: HttpT e r w s p m a
-  -> (HttpException -> HttpT e r w s p m a) -- ^ Handler
-  -> HttpT e r w s p m a
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => HttpTT e r w s p t eff a
+  -> (HttpException -> HttpTT e r w s p t eff a) -- ^ Handler
+  -> HttpTT e r w s p t eff a
 catchHttpException x handler = catch x $ \err ->
   case err of
     E_Http e -> handler e
@@ -384,17 +387,19 @@ catchHttpException x handler = catch x $ \err ->
 
 -- | Also logs the exception.
 throwIOException
-  :: IOException
-  -> HttpT e r w s p m a
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => IOException
+  -> HttpTT e r w s p t eff a
 throwIOException e = do
   logNow LogError $ errorMessage $ E_IO e
   throw $ E_IO e
 
 -- | Re-throws other error types.
 catchIOException
-  :: HttpT e r w s p m a
-  -> (IOException -> HttpT e r w s p m a) -- ^ Handler
-  -> HttpT e r w s p m a
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => HttpTT e r w s p t eff a
+  -> (IOException -> HttpTT e r w s p t eff a) -- ^ Handler
+  -> HttpTT e r w s p t eff a
 catchIOException x handler = catch x $ \err ->
   case err of
     E_IO e -> handler e
@@ -402,17 +407,19 @@ catchIOException x handler = catch x $ \err ->
 
 -- | Also logs the exception.
 throwJsonError
-  :: JsonError
-  -> HttpT e r w s p m a
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => JsonError
+  -> HttpTT e r w s p t eff a
 throwJsonError e = do
   logNow LogError $ errorMessage $ E_Json e
   throw $ E_Json e
 
 -- | Re-throws other error types.
 catchJsonError
-  :: HttpT e r w s p m a
-  -> (JsonError -> HttpT e r w s p m a) -- ^ Handler
-  -> HttpT e r w s p m a
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => HttpTT e r w s p t eff a
+  -> (JsonError -> HttpTT e r w s p t eff a) -- ^ Handler
+  -> HttpTT e r w s p t eff a
 catchJsonError x handler = catch x $ \err ->
   case err of
     E_Json e -> handler e
@@ -420,17 +427,19 @@ catchJsonError x handler = catch x $ \err ->
 
 -- | Also logs the exception.
 throwError
-  :: e
-  -> HttpT e r w s p m a
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => e
+  -> HttpTT e r w s p t eff a
 throwError e = do
   logNow LogError $ errorMessage $ E e
   throw $ E e
 
 -- | Re-throws other error types.
 catchError
-  :: HttpT e r w s p m a
-  -> (e -> HttpT e r w s p m a) -- ^ Handler
-  -> HttpT e r w s p m a
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => HttpTT e r w s p t eff a
+  -> (e -> HttpTT e r w s p t eff a) -- ^ Handler
+  -> HttpTT e r w s p t eff a
 catchError x handler = catch x $ \err ->
   case err of
     E e -> handler e
@@ -438,12 +447,13 @@ catchError x handler = catch x $ \err ->
 
 -- | Handle any thrown error. To handle only errors of a specific type, see @catchError@, @catchJsonError@, @catchIOException@, or @catchHttpException@.
 catchAnyError
-  :: HttpT e r w s p m a
-  -> (e -> HttpT e r w s p m a)
-  -> (HttpException -> HttpT e r w s p m a)
-  -> (IOException -> HttpT e r w s p m a)
-  -> (JsonError -> HttpT e r w s p m a)
-  -> HttpT e r w s p m a
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => HttpTT e r w s p t eff a
+  -> (e -> HttpTT e r w s p t eff a)
+  -> (HttpException -> HttpTT e r w s p t eff a)
+  -> (IOException -> HttpTT e r w s p t eff a)
+  -> (JsonError -> HttpTT e r w s p t eff a)
+  -> HttpTT e r w s p t eff a
 catchAnyError x hE hHttp hIO hJson =
   catch x $ \err -> case err of
     E e -> hE e
@@ -759,7 +769,7 @@ data S s = S
   { _httpOptions :: Wreq.Options
   , _httpSession :: Maybe S.Session
   , _userState :: s
-  }
+  } deriving Show
 
 -- | State constructor
 basicState :: s -> S s
@@ -879,9 +889,10 @@ evalMockIO eval x = case x of
 
 -- | All log statements should go through @logNow@.
 logNow
-  :: LogSeverity
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => LogSeverity
   -> Log e w
-  -> HttpT e r w s p m ()
+  -> HttpTT e r w s p t eff ()
 logNow severity msg = do
   time <- prompt GetSystemTime
   printer <- reader _logEntryPrinter
@@ -895,59 +906,80 @@ logNow severity msg = do
 
 -- | Write a comment to the log
 comment
-  :: String
-  -> HttpT e r w s p m ()
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => String
+  -> HttpTT e r w s p t eff ()
 comment msg = logNow LogInfo $ L_Comment msg
 
 -- | Pause the thread
 wait
-  :: Int -- ^ milliseconds
-  -> HttpT e r w s p m ()
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => Int -- ^ milliseconds
+  -> HttpTT e r w s p t eff ()
 wait k = do
   logNow LogInfo $ L_Pause k
   prompt $ ThreadDelay k
 
 -- | Write an entry to the log
-logEntry :: LogSeverity -> w -> HttpT e r w s p m ()
+logEntry
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => LogSeverity -> w -> HttpTT e r w s p t eff ()
 logEntry severity = logNow severity . L_Log
 
 -- | For debug level messages
-logDebug :: w -> HttpT e r w s p m ()
+logDebug
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => w -> HttpTT e r w s p t eff ()
 logDebug = logEntry LogDebug
 
 -- | For informational messages
-logInfo :: w -> HttpT e r w s p m ()
+logInfo
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => w -> HttpTT e r w s p t eff ()
 logInfo = logEntry LogInfo
 
 -- | For normal but significant conditions
-logNotice :: w -> HttpT e r w s p m ()
+logNotice
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => w -> HttpTT e r w s p t eff ()
 logNotice = logEntry LogNotice
 
 -- | For warning conditions
-logWarning :: w -> HttpT e r w s p m ()
+logWarning
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => w -> HttpTT e r w s p t eff ()
 logWarning = logEntry LogWarning
 
 -- | For error conditions
-logError :: w -> HttpT e r w s p m ()
+logError
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => w -> HttpTT e r w s p t eff ()
 logError = logEntry LogError
 
 -- | For critical conditions
-logCritical :: w -> HttpT e r w s p m ()
+logCritical
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => w -> HttpTT e r w s p t eff ()
 logCritical = logEntry LogCritical
 
 -- | Action must be taken immediately
-logAlert :: w -> HttpT e r w s p m ()
+logAlert
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => w -> HttpTT e r w s p t eff ()
 logAlert = logEntry LogAlert
 
 -- | System is unusable
-logEmergency :: w -> HttpT e r w s p m ()
+logEmergency
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => w -> HttpTT e r w s p t eff ()
 logEmergency = logEntry LogEmergency
 
 -- | Set the severity level of all log actions in a session.
 setLogSeverity
-  :: LogSeverity
-  -> HttpT e r w s p m a
-  -> HttpT e r w s p m a
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => LogSeverity
+  -> HttpTT e r w s p t eff a
+  -> HttpTT e r w s p t eff a
 setLogSeverity severity = censor (W . map f . unW)
   where
     f :: LogEntry e w -> LogEntry e w
@@ -957,9 +989,10 @@ setLogSeverity severity = censor (W . map f . unW)
 
 -- | Write a line to a handle
 hPutStrLn
-  :: Handle
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => Handle
   -> String
-  -> HttpT e r w s p m ()
+  -> HttpTT e r w s p t eff ()
 hPutStrLn h str = do
   result <- prompt $ HPutStrLn h str
   case result of
@@ -968,10 +1001,11 @@ hPutStrLn h str = do
 
 -- | Write a line to a handle, using the given `MVar` as a lock
 hPutStrLnBlocking
-  :: MVar ()
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => MVar ()
   -> Handle
   -> String
-  -> HttpT e r w s p m ()
+  -> HttpTT e r w s p t eff ()
 hPutStrLnBlocking lock h str = do
   result <- prompt $ HPutStrLnBlocking lock h str
   case result of
@@ -982,8 +1016,9 @@ hPutStrLnBlocking lock h str = do
 
 -- | Run a @GET@ request
 httpGet
-  :: Url
-  -> HttpT e r w s p m HttpResponse
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => Url
+  -> HttpTT e r w s p t eff HttpResponse
 httpGet url = do
   R{..} <- ask
   S{..} <- get
@@ -999,8 +1034,9 @@ httpGet url = do
 
 -- | Run a @GET@ request, but do not write the request or response to the logs.
 httpSilentGet
-  :: Url
-  -> HttpT e r w s p m HttpResponse
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => Url
+  -> HttpTT e r w s p t eff HttpResponse
 httpSilentGet url = do
   R{..} <- ask
   S{..} <- get
@@ -1016,9 +1052,10 @@ httpSilentGet url = do
 
 -- | Run a @POST@ request
 httpPost
-  :: Url
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => Url
   -> ByteString -- ^ Payload
-  -> HttpT e r w s p m HttpResponse
+  -> HttpTT e r w s p t eff HttpResponse
 httpPost url payload = do
   R{..} <- ask
   S{..} <- get
@@ -1034,9 +1071,10 @@ httpPost url payload = do
 
 -- | Run a @POST@ request, but do not write the request or response to the logs.
 httpSilentPost
-  :: Url
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => Url
   -> ByteString -- ^ Payload
-  -> HttpT e r w s p m HttpResponse
+  -> HttpTT e r w s p t eff HttpResponse
 httpSilentPost url payload = do
   R{..} <- ask
   S{..} <- get
@@ -1052,8 +1090,9 @@ httpSilentPost url payload = do
 
 -- | Run a @DELETE@ request
 httpDelete
-  :: Url
-  -> HttpT e r w s p m HttpResponse
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => Url
+  -> HttpTT e r w s p t eff HttpResponse
 httpDelete url = do
   R{..} <- ask
   S{..} <- get
@@ -1069,8 +1108,9 @@ httpDelete url = do
 
 -- | Run a @DELETE@ request, but do not write the request or response to the logs.
 httpSilentDelete
-  :: Url
-  -> HttpT e r w s p m HttpResponse
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => Url
+  -> HttpTT e r w s p t eff HttpResponse
 httpSilentDelete url = do
   R{..} <- ask
   S{..} <- get
@@ -1088,17 +1128,19 @@ httpSilentDelete url = do
 
 -- | Parse a `ByteString` to a JSON `Value`.
 parseJson
-  :: ByteString
-  -> HttpT e r w s p m Value
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => ByteString
+  -> HttpTT e r w s p t eff Value
 parseJson bytes = case preview _Value bytes of
   Just value -> return value
   Nothing -> throwJsonError $ JsonParseError bytes
 
 -- | Object member lookup.
 lookupKeyJson
-  :: Text -- ^ Key name
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => Text -- ^ Key name
   -> Value -- ^ JSON object
-  -> HttpT e r w s p m Value
+  -> HttpTT e r w s p t eff Value
 lookupKeyJson key v = case v of
   Object obj -> case lookup key obj of
     Nothing -> throwJsonError $ JsonKeyDoesNotExist key (Object obj)
@@ -1107,9 +1149,9 @@ lookupKeyJson key v = case v of
 
 -- | Decode a `A.Value` to some other type.
 constructFromJson
-  :: (FromJSON a)
+  :: (Monad eff, Monad (t eff), MonadTrans t, FromJSON a)
   => Value
-  -> HttpT e r w s p m a
+  -> HttpTT e r w s p t eff a
 constructFromJson value = case fromJSON value of
   Success x -> return x
   Error msg -> throwJsonError $ JsonConstructError msg

@@ -4,6 +4,7 @@ module Control.Monad.Script.Http.Test (
 ) where
 
 import Control.Concurrent.MVar
+import Control.Monad.Trans.Identity
 import System.IO
 import Data.Functor.Identity
   ( Identity(..) )
@@ -104,31 +105,31 @@ real_internal_tests_for pe pr pw ps =
   in
     testGroup label
       [ testProperty "comment: return ()" $
-        prop_comment_value pe pr pw ps (evalIO evalId) id undefined
+        prop_comment_value pe pr pw ps (evalIO evalId) runIdentityT undefined
       , testProperty "comment: state unchanged" $
-        prop_comment_state pe pr pw ps (evalIO evalId) id undefined
+        prop_comment_state pe pr pw ps (evalIO evalId) runIdentityT undefined
       , testProperty "wait: return ()" $
-        prop_wait_value pe pr pw ps (evalIO evalId) id undefined
+        prop_wait_value pe pr pw ps (evalIO evalId) runIdentityT undefined
       , testProperty "wait: state unchanged" $
-        prop_wait_state pe pr pw ps (evalIO evalId) id undefined
+        prop_wait_state pe pr pw ps (evalIO evalId) runIdentityT undefined
       , testProperty "httpGet: return" $
-        prop_httpGet pe pr pw ps (evalIO evalId) id undefined
+        prop_httpGet pe pr pw ps (evalIO evalId) runIdentityT undefined
       , testProperty "httpSilentGet: return" $
-        prop_httpSilentGet pe pr pw ps (evalIO evalId) id undefined
+        prop_httpSilentGet pe pr pw ps (evalIO evalId) runIdentityT undefined
       , testProperty "httpPost: return ()" $
-        prop_httpPost pe pr pw ps (evalIO evalId) id undefined
+        prop_httpPost pe pr pw ps (evalIO evalId) runIdentityT undefined
       , testProperty "httpSilentPost: return ()" $
-        prop_httpSilentPost pe pr pw ps (evalIO evalId) id undefined
+        prop_httpSilentPost pe pr pw ps (evalIO evalId) runIdentityT undefined
       , testProperty "throwError: is caught" $
-        prop_throwError pe pr pw ps (evalIO evalId) id undefined
+        prop_throwError pe pr pw ps (evalIO evalId) runIdentityT undefined
       , testProperty "throwJsonError: is caught" $
-        prop_throwJsonError pe pr pw ps (evalIO evalId) id undefined
+        prop_throwJsonError pe pr pw ps (evalIO evalId) runIdentityT undefined
       , testProperty "parseJson: valid" $
-        prop_parseJson pe pr pw ps (evalIO evalId) id undefined
+        prop_parseJson pe pr pw ps (evalIO evalId) runIdentityT undefined
       , testProperty "lookupKeyJson: valid" $
-        prop_lookupKeyJson pe pr pw ps (evalIO evalId) id undefined
+        prop_lookupKeyJson pe pr pw ps (evalIO evalId) runIdentityT undefined
       , testProperty "logEntries: value" $
-        prop_logEntries_log pe pr pw ps (evalIO evalId) id undefined
+        prop_logEntries_log pe pr pw ps (evalIO evalId) runIdentityT undefined
       ]
 
 
@@ -138,13 +139,13 @@ pU = Proxy
 pI :: Proxy Int
 pI = Proxy
 
-toIO :: MockWorld s -> MockIO s a -> IO a
-toIO u (MockIO x) = do
+toIO :: MockWorld s -> IdentityT (MockIO s) a -> IO a
+toIO u (IdentityT (MockIO x)) = do
   let (a,_) = x u
   return a
 
-toIOs :: MockWorld s -> MockIO s a -> IO (a, MockWorld s)
-toIOs u (MockIO x) = do
+toIOs :: MockWorld s -> IdentityT (MockIO s) a -> IO (a, MockWorld s)
+toIOs u (IdentityT (MockIO x)) = do
   return $ x u
 
 as :: a -> a -> a
@@ -177,55 +178,55 @@ noisyEnv r = (trivialEnv r)
   }
 
 prop_comment_value
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
+  -> HttpT e r w s p eff ()
   -> s -> r -> String -> Property
 prop_comment_value _ _ _ _ eval cond x s r msg =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasValue (== ())) $
     as x $ do
       comment msg
 
 prop_comment_state
-  :: (Monad eff, Eq s)
+  :: (Monad eff, Eq s, Show e, Show w, Show s)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
+  -> HttpT e r w s p eff ()
   -> s -> r -> String -> Property
 prop_comment_state _ _ _ _ eval cond x s r msg =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasState (== s)) $
     as x $ do
       comment msg
 
 prop_comment_write
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s, Show u)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
+  -> HttpT e r w s p eff ()
   -> s -> r -> String -> Property
 prop_comment_write _ _ _ _ eval cond x s r str =
   let msg = filter (/= '\n') str in
-  checkHttpM (basicState s) (noisyEnv r) eval cond
+  checkHttpTT (basicState s) (noisyEnv r) eval cond
     (hasWorld $ outputContains msg) $
     as x $ do
       comment msg
 
 prop_comment_silent
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s, Show u)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
+  -> HttpT e r w s p eff ()
   -> s -> r -> String -> Property
 prop_comment_silent _ _ _ _ eval cond x s r str =
   let msg = filter (/= '\n') str in
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasWorld outputIsEmpty) $
     as x $ do
       comment msg
@@ -251,80 +252,80 @@ outputIsEmpty world =
   _files world == emptyFileSystem
 
 prop_wait_value
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
+  -> HttpT e r w s p eff ()
   -> s -> r -> Int -> Property
 prop_wait_value _ _ _ _ eval cond x s r k =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasValue (== ())) $
     as x $ do
       wait k
 
 prop_wait_state
-  :: (Monad eff, Eq s)
+  :: (Monad eff, Eq s, Show e, Show w, Show s)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
+  -> HttpT e r w s p eff ()
   -> s -> r -> Int -> Property
 prop_wait_state _ _ _ _ eval cond x s r k =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasState (== s)) $
     as x $ do
       wait k
 
 prop_wait_write
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s, Show u)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
+  -> HttpT e r w s p eff ()
   -> s -> r -> Int -> Property
 prop_wait_write _ _ _ _ eval cond x s r k =
-  checkHttpM (basicState s) (noisyEnv r) eval cond
+  checkHttpTT (basicState s) (noisyEnv r) eval cond
     (hasWorld $ outputContains $ "Wait for " ++ show k ++ "μs") $
     as x $ do
       wait k
 
 prop_wait_silent
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s, Show u)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
+  -> HttpT e r w s p eff ()
   -> s -> r -> Int -> Property
 prop_wait_silent _ _ _ _ eval cond x s r k =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasWorld outputIsEmpty) $
     as x $ do
       wait k
 
 prop_httpGet
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
+  -> HttpT e r w s p eff ()
   -> s -> r -> Property
 prop_httpGet _ _ _ _ eval cond x s r =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasValue (== ())) $
     as x $ do
       httpGet "http://example.com"
       return ()
 
 prop_httpGet_json
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s, Show u)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
+  -> HttpT e r w s p eff ()
   -> s -> r -> Property
 prop_httpGet_json _ _ _ _ eval cond x s r =
-  checkHttpM (basicState s) (jsonEnv r) eval cond
+  checkHttpTT (basicState s) (jsonEnv r) eval cond
     (hasWorld $ outputContains "True") $
     as x $ do
       val1 <- httpGet "http://example.com/json"
@@ -335,126 +336,126 @@ prop_httpGet_json _ _ _ _ eval cond x s r =
       return ()
 
 prop_httpGet_write
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s, Show u)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
+  -> HttpT e r w s p eff ()
   -> s -> r -> Property
 prop_httpGet_write _ _ _ _ eval cond x s r =
-  checkHttpM (basicState s) (noisyEnv r) eval cond
+  checkHttpTT (basicState s) (noisyEnv r) eval cond
     (hasWorld $ outputContains "GET http://example.com") $
     as x $ do
       httpGet "http://example.com"
       return ()
 
 prop_httpGet_silent
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s, Show u)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
+  -> HttpT e r w s p eff ()
   -> s -> r -> Property
 prop_httpGet_silent _ _ _ _ eval cond x s r =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasWorld outputIsEmpty) $
     as x $ do
       httpGet "http://example.com"
       return ()
 
 prop_httpSilentGet
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
+  -> HttpT e r w s p eff ()
   -> s -> r -> Property
 prop_httpSilentGet _ _ _ _ eval cond x s r =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasValue (== ())) $
     as x $ do
       httpSilentGet "http://example.com"
       return ()
 
 prop_httpSilentGet_write
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s, Show u)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
+  -> HttpT e r w s p eff ()
   -> s -> r -> Property
 prop_httpSilentGet_write _ _ _ _ eval cond x s r =
-  checkHttpM (basicState s) (noisyEnv r) eval cond
+  checkHttpTT (basicState s) (noisyEnv r) eval cond
     (hasWorld $ not . outputContains "http://example.com") $
     as x $ do
       httpSilentGet "http://example.com"
       return ()
 
 prop_httpPost
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
+  -> HttpT e r w s p eff ()
   -> s -> r -> String -> Property
 prop_httpPost _ _ _ _ eval cond x s r payload =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasValue (== ())) $
     as x $ do
       httpPost "http://example.com" (fromString payload)
       return ()
 
 prop_httpSilentPost
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
+  -> HttpT e r w s p eff ()
   -> s -> r -> String -> Property
 prop_httpSilentPost _ _ _ _ eval cond x s r payload =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasValue (== ())) $
     as x $ do
       httpSilentPost "http://example.com" (fromString payload)
       return ()
 
 prop_throwError
-  :: (Monad eff, Eq e)
+  :: (Monad eff, Eq e, Show e, Show w, Show s)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
-  -> Http e r w s p Int
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
+  -> HttpT e r w s p eff Int
   -> s -> r -> Int -> e -> Property
 prop_throwError _ _ _ _ eval cond x s r k err =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasValue (== k)) $
     as x $ do
       catchError (throwError err)
         (\e -> if e == err then return k else return (k+1))
 
 prop_logDebug_write
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s, Show u)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
+  -> HttpT e r w s p eff ()
   -> s -> r -> w -> Property
 prop_logDebug_write _ _ _ _ eval cond x s r w =
-  checkHttpM (basicState s) (noisyEnv r) eval cond
+  checkHttpTT (basicState s) (noisyEnv r) eval cond
     (hasWorld $ outputContains "LOG") $
     as x $ do
       logDebug w
       return ()
 
 prop_logEntries_log
-  :: (Monad eff, Eq w)
+  :: (Monad eff, Eq w, Show e, Show w, Show s)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
+  -> HttpT e r w s p eff ()
   -> s -> r -> w -> w -> w -> Property
 prop_logEntries_log _ _ _ _ eval cond x s r w1 w2 w3 =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasLog $ \w -> [w1,w2,w3] == logEntries w) $
     as x $ do
       logDebug w1
@@ -464,56 +465,56 @@ prop_logEntries_log _ _ _ _ eval cond x s r w1 w2 w3 =
       return ()
 
 prop_throwError_write
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s, Show u)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO ((Either (E e) t, S s, W e w), MockWorld u))
+  -> HttpT e r w s p eff ()
   -> s -> r -> e -> Property
 prop_throwError_write _ _ _ _ eval cond x s r e =
-  checkHttpM (basicState s) (noisyEnv r) eval cond
+  checkHttpTT (basicState s) (noisyEnv r) eval cond
     (hasWorld $ outputContains "ERROR") $
     as x $ do
       throwError e
       return ()
 
 prop_throwJsonError
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
-  -> Http e r w s p Int
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
+  -> HttpT e r w s p eff Int
   -> s -> r -> Int -> JsonError -> Property
 prop_throwJsonError _ _ _ _ eval cond x s r k err =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasValue (== k)) $
     as x $ do
       catchJsonError (throwJsonError err)
         (\e -> if e == err then return k else return (k+1))
 
 prop_parseJson
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
-  -> Http e r w s p ()
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
+  -> HttpT e r w s p eff ()
   -> s -> r -> Int -> Property
 prop_parseJson _ _ _ _ eval cond x s r k =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasValue (== ())) $
     as x $ do
       parseJson $ fromString $ "{ \"key\":" ++ show k ++ " }"
       return ()
 
 prop_lookupKeyJson
-  :: (Monad eff)
+  :: (Monad eff, Show e, Show w, Show s)
   => Proxy e -> Proxy r -> Proxy w -> Proxy s
   -> (forall u. P p u -> eff u)
-  -> (forall e s w t. eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
-  -> Http e r w s p Int
+  -> (forall e s w t. IdentityT eff (Either (E e) t, S s, W e w) -> IO (Either (E e) t, S s, W e w))
+  -> HttpT e r w s p eff Int
   -> s -> r -> Int -> Property
 prop_lookupKeyJson _ _ _ _ eval cond x s r k =
-  checkHttpM (basicState s) (testEnv r) eval cond
+  checkHttpTT (basicState s) (testEnv r) eval cond
     (hasValue (== k)) $
     as x $ do
       obj <- parseJson $ fromString $ "{ \"key\":" ++ show k ++ " }"
