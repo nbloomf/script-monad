@@ -6,6 +6,8 @@ Changelog for script-monad
 
 This release has some significant changes to type names and signatures. The good news is that these changes make the code simpler and more modular. The bad news is that it now uses the `QuantifiedConstraints` extension, available only in GHC >=8.6.
 
+* Added
+    * `liftScriptTT` and `liftHttpTT`
 * Changed
     * Most functions now have additional `Monad` and `MonadTrans` constraints.
     * `ScriptT` is now `ScriptTT` and takes the effect monad as an explicit type parameter. Now acts like a monad transformer transformer.

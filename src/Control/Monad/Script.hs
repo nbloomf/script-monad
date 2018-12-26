@@ -31,6 +31,7 @@ module Control.Monad.Script (
   -- * ScriptTT
   , ScriptTT()
   , execScriptTT
+  , liftScriptTT
 
   -- * Error
   , except
@@ -122,8 +123,9 @@ runScriptTT
        -> t eff v
 runScriptTT (ScriptTT x) = x
 
-instance (Monoid w, Monad eff, Monad (t eff), MonadTrans t)
-  => Monad (ScriptTT e r w s p t eff) where
+instance
+  (Monoid w, Monad eff, Monad (t eff), MonadTrans t)
+    => Monad (ScriptTT e r w s p t eff) where
   return x = ScriptTT $ \(s,_) -> \end _ ->
     end (Right x, s, mempty)
 
@@ -139,20 +141,29 @@ instance (Monoid w, Monad eff, Monad (t eff), MonadTrans t)
           
     runScriptTT x (s0,r) g cont
 
-instance (Monoid w, Monad eff, Monad (t eff), MonadTrans t)
-  => Applicative (ScriptTT e r w s p t eff) where
+instance
+  (Monoid w, Monad eff, Monad (t eff), MonadTrans t)
+    => Applicative (ScriptTT e r w s p t eff) where
   pure = return
   (<*>) = ap
 
-instance (Monoid w, Monad eff, Monad (t eff), MonadTrans t)
-  => Functor (ScriptTT e r w s p t eff) where
+instance
+  (Monoid w, Monad eff, Monad (t eff), MonadTrans t)
+    => Functor (ScriptTT e r w s p t eff) where
   fmap f x = x >>= (return . f)
 
-instance (Monoid w, forall m. (Monad m) => Monad (t m), MonadTrans t)
-  => MonadTrans (ScriptTT e r w s p t) where
+instance
+  (Monoid w, forall m. (Monad m) => Monad (t m), MonadTrans t)
+    => MonadTrans (ScriptTT e r w s p t) where
   lift x = ScriptTT $ \(s,_) -> \end _ ->
     lift x >>= \a -> end (Right a, s, mempty)
 
+liftScriptTT
+  :: (Monoid w, Monad eff, Monad (t eff), MonadTrans t)
+  => t eff a -> ScriptTT e r w s p t eff a
+liftScriptTT x = ScriptTT $ \(s,_) -> \end _ -> do
+  a <- x
+  end (Right a, s, mempty)
 
 
 

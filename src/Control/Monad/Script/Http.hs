@@ -25,6 +25,7 @@ module Control.Monad.Script.Http (
   -- * HttpT
   , HttpTT()
   , execHttpTT
+  , liftHttpTT
 
   -- * Error
   , throwError
@@ -193,23 +194,32 @@ newtype HttpTT e r w s p t eff a = HttpTT
 -- | An HTTP session returning an @a@, writing to a log of type @W e w@, reading from an environment of type @R e w r@, with state of type @S s@, throwing errors of type @E e@, performing effectful computations described by @P p a@, with inner monad @eff@. `HttpTT` over `IdentityT`.
 type HttpT e r w s p = HttpTT e r w s p IdentityT
 
-instance (Monad eff, Monad (t eff), MonadTrans t)
-  => Functor (HttpTT e r w s p t eff) where
+instance
+  (Monad eff, Monad (t eff), MonadTrans t)
+    => Functor (HttpTT e r w s p t eff) where
   fmap f = HttpTT . fmap f . httpTT
 
-instance (Monad eff, Monad (t eff), MonadTrans t)
-  => Applicative (HttpTT e r w s p t eff) where
+instance
+  (Monad eff, Monad (t eff), MonadTrans t)
+    => Applicative (HttpTT e r w s p t eff) where
   pure = return
   (<*>) = ap
 
-instance (Monad eff, Monad (t eff), MonadTrans t)
-  => Monad (HttpTT e r w s p t eff) where
+instance
+  (Monad eff, Monad (t eff), MonadTrans t)
+    => Monad (HttpTT e r w s p t eff) where
   return = HttpTT . return
   (HttpTT x) >>= f = HttpTT (x >>= (httpTT . f))
 
-instance (MonadTrans t, forall m. (Monad m) => Monad (t m))
-  => MonadTrans (HttpTT e r w s p t) where
+instance
+  (MonadTrans t, forall m. (Monad m) => Monad (t m))
+    => MonadTrans (HttpTT e r w s p t) where
   lift = HttpTT . lift
+
+liftHttpTT
+  :: (Monad eff, Monad (t eff), MonadTrans t)
+  => t eff a -> HttpTT e r w s p t eff a
+liftHttpTT = HttpTT . S.liftScriptTT
 
 
 
