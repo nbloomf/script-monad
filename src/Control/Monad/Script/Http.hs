@@ -237,7 +237,7 @@ execHttpTT s r p = S.execScriptTT s r p . httpTT
 
 -- | Turn an `HttpTT` into a property; for testing with QuickCheck.
 checkHttpTT
-  :: (Monad eff, Monad (t eff), MonadTrans t, MonadTrans t, Show q)
+  :: (Monad eff, Monad (t eff), MonadTrans t, Show q)
   => S s -- ^ Initial state
   -> R e w r -- ^ Environment
   -> (forall u. P p u -> eff u) -- ^ Effect evaluator
