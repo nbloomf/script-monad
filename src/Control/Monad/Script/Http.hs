@@ -216,6 +216,7 @@ instance
     => MonadTrans (HttpTT e r w s p t) where
   lift = HttpTT . lift
 
+-- | Lift a value from the inner transformer.
 liftHttpTT
   :: (Monad eff, Monad (t eff), MonadTrans t)
   => t eff a -> HttpTT e r w s p t eff a

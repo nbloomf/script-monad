@@ -1,5 +1,5 @@
 name:           script-monad
-version:        0.0.2.1
+version:        0.0.3
 description:    Please see the README on GitHub at <https://github.com/nbloomf/script-monad#readme>
 homepage:       https://github.com/nbloomf/script-monad#readme
 bug-reports:    https://github.com/nbloomf/script-monad/issues
@@ -11,7 +11,7 @@ license-file:   LICENSE
 build-type:     Simple
 cabal-version:  >= 1.10
 category:       Control.Monad
-synopsis:       Transformer stack of error, reader, writer, state, and prompt monads
+synopsis:       Stack of error, reader, writer, state, and prompt monad transformers
 
 extra-source-files:
     ChangeLog.md

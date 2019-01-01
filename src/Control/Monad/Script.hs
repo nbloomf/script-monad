@@ -158,6 +158,7 @@ instance
   lift x = ScriptTT $ \(s,_) -> \end _ ->
     lift x >>= \a -> end (Right a, s, mempty)
 
+-- | Lift a value from the inner transformer.
 liftScriptTT
   :: (Monoid w, Monad eff, Monad (t eff), MonadTrans t)
   => t eff a -> ScriptTT e r w s p t eff a
