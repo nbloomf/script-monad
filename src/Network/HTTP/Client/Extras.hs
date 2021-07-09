@@ -53,7 +53,7 @@ data HttpResponse = HttpResponse
   , _responseHeaders :: ResponseHeaders
   , _responseBody :: ByteString
   , _responseCookieJar :: CookieJar
-  } deriving (Eq, Show)
+  } deriving (Show)
 
 -- | Convert an opaque `Response ByteString` into an `HttpResponse`.
 readHttpResponse :: Response ByteString -> HttpResponse
