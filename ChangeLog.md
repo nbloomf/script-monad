@@ -1,6 +1,13 @@
 Changelog for script-monad
 ==========================
 
+0.0.3.1
+-------
+* Removed
+    * `Eq` instance for `HttpResponse`, see
+    https://github.com/snoyberg/http-client/issues/433
+
+
 0.0.3
 -----
 
